@@ -33,8 +33,8 @@ SYNC_GROUPS = True if os.environ['SYNC_GROUPS'] == 'True' else False
 DELETE_GROUPS = True if os.environ['DELETE_GROUPS'] == 'True' else False
 
 # TO DO: instead of blacklists we should use an AVU on groups/users indicating weather it should be synced or not
-UNSYNCED_USERS = "service-pid,service-mdl,service-disqover,service-dropzones,service-surfarchive".split(
-    ',')
+#UNSYNCED_USERS = "service-pid,service-mdl,service-disqover,service-dropzones,service-surfarchive".split(
+#    ',')
 UNSYNCED_GROUPS = "rodsadmin,DH-ingest,public,DH-project-admins".split(',')
 
 # LDAP config
@@ -42,9 +42,9 @@ LDAP_USER = os.environ['LDAP_USER']
 LDAP_PASS = os.environ['LDAP_PASS']
 LDAP_HOST = os.environ['LDAP_HOST']
 
-LDAP_GROUP = "Users"
-LDAP_USER_BASE_DN = "ou=users,DC=datahubmaastricht,DC=nl"
-LDAP_GROUPS_BASE_DN = "ou=groups,DC=datahubmaastricht,DC=nl"
+#LDAP_GROUP = "Users"
+LDAP_USER_BASE_DN = os.environ['LDAP_USERS_BASE_DN']   
+LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']"
 
 # iRODS config
 IRODS_HOST = os.environ['IRODS_HOST']
@@ -59,8 +59,8 @@ IRODS_ZONE = "nlmumc"
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument("commit", action='store_true', help="write any updates/changes to iRODS")
-    parser.add_argument("scheduled", action='store_true', help="if set runs every few minutes")
+    parser.add_argument("--commit", default=False, action='store_true', help="write any updates/changes to iRODS")
+    parser.add_argument("--scheduled", default=False, action='store_true', help="if set runs every few minutes")
 
     return parser.parse_args()
 
@@ -149,8 +149,10 @@ class LdapUser:
     def sync_to_irods(self, irods_session, dry_run, created, updated, failed):
         # Check if user exists
         exists_username = True
-        try:
-            self.irods_user = irods_session.users.get(self.uid)
+        try:        
+            # Lower case the uid (email address) from UM LDAP
+            # There are users with upper case character in their LDAP uid
+            self.irods_user = irods_session.users.get(self.uid.lower() )
         except UserDoesNotExist:
             exists_username = False
         # If user does not exists create user
@@ -249,7 +251,7 @@ class LdapGroup:
 ##########################################################
 
 
-def syncable_irods_users(sess, unsynced_users):
+def syncable_irods_users(sess):
     irods_user_names_set = set()
     # filter only rodsusers, filter the special users, check wich one are not in the LDAP list
     query = sess.query(User.name, User.id, User.type).filter(
@@ -257,13 +259,25 @@ def syncable_irods_users(sess, unsynced_users):
     n = 0
     for result in query:
         n = n + 1
-        if not result[User.name] in unsynced_users:
+#       if not result[User.name] in unsynced_users:     
+        irodsUser = sess.users.get(result[User.name])
+        syncAVUs = irodsUser.metadata.get_all('ldapSync')
+        if not syncAVUs:
             irods_user_names_set.add(result[User.name])
-    logger.debug("-- iRods users found: {} (allowed for synchronization: {})".format(n, len(irods_user_names_set)))
+        elif (len(syncAVUs) == 1) and (syncAVUs[0].value == "true"):
+            irods_user_names_set.add(result[User.name])
+        elif (len(syncAVUs) == 1) and (syncAVUs[0].value == "false"):
+            logger.debug( "AVU ldapSync=false found for user: {}".format( irodsUser.name ))
+            continue
+        else:
+            logger.error( "found unexpected number of AVUs for key ldapSync and user: {} {}".format( irodsUser.name, len(syncAVUs) ))
+
+    logger.debug("iRods users found: {} (allowed for synchronization: {})".format(n, len(irods_user_names_set)))
     return irods_user_names_set
 
 
 ##########################################################
+
 # get all the relevant attributes of all users in LDAP, returns an array with dictionaries
 def get_users_from_ldap(l):
     search_filter = "(objectClass=*)"
@@ -299,8 +313,7 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
     ldap_users = get_users_from_ldap(ldap)
     logger.info("* LDAP users found: %d" % len(ldap_users))
 
-    # TO DO: give irods users an AVU to mark them as SRAM_SYNCED true/false, instead of using a blacklist in config.ini
-    irods_users = syncable_irods_users(irods, UNSYNCED_USERS)
+    irods_users = syncable_irods_users(irods)
 
     # remove obsolete users from irods
     if not dry_run and DELETE_USERS:
