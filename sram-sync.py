@@ -43,8 +43,8 @@ LDAP_PASS = os.environ['LDAP_PASS']
 LDAP_HOST = os.environ['LDAP_HOST']
 
 #LDAP_GROUP = "Users"
-LDAP_USER_BASE_DN = os.environ['LDAP_USERS_BASE_DN']   
-LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']"
+LDAP_USERS_BASE_DN = os.environ['LDAP_USERS_BASE_DN']   
+LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']
 
 # iRODS config
 IRODS_HOST = os.environ['IRODS_HOST']
@@ -281,7 +281,7 @@ def syncable_irods_users(sess):
 # get all the relevant attributes of all users in LDAP, returns an array with dictionaries
 def get_users_from_ldap(l):
     search_filter = "(objectClass=*)"
-    return for_ldap_entries_do(l, LDAP_USER_BASE_DN, search_filter, LdapUser.LDAP_ATTRIBUTES,
+    return for_ldap_entries_do(l, LDAP_USERS_BASE_DN, search_filter, LdapUser.LDAP_ATTRIBUTES,
                                LdapUser.create_for_ldap_entry)
 
 
