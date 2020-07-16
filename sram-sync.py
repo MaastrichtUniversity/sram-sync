@@ -345,6 +345,7 @@ def remove_obsolete_irods_users(sess, ldap_users, irods_users):
     number_deletions = len(deletion_candidates)
     logger.info("-- identified %d obsolete irods users for deletion" % number_deletions)
 
+# Safety pal: the script must not delete if amount of users to be deleted is higher than the threshold
     if number_deletions >= DELETE_USERS_LIMIT:
         logger.error("-- The limit of deletions (%d) in one synchronization have been reached. "
                      "Deletions aborted" % number_deletions)
