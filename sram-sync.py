@@ -40,17 +40,17 @@ LDAP_PASS = os.environ['LDAP_PASS']
 LDAP_HOST = os.environ['LDAP_HOST']
 
 #LDAP_GROUP = "Users"
-LDAP_USERS_BASE_DN = os.environ['LDAP_USERS_BASE_DN']   
+LDAP_USERS_BASE_DN = os.environ['LDAP_USERS_BASE_DN']
 LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']
 
 LDAP_SERVICE_PREFIX = "datahubmaastricht:"
-LDAP_USERS_SEARCH_FILTER = "(objectClass=person)"      #"(objectClass=*)"
-LDAP_GROUPS_SEARCH_FILTER = "(objectClass=posixGroup)" #"(objectClass=groupOfNames)"      
-LDAP_GROUP_MEMBER_ATTR = 'memberUid' #will be sczMember!
+LDAP_USERS_SEARCH_FILTER = "(objectClass=person)"
+LDAP_GROUPS_SEARCH_FILTER = "(objectClass=posixGroup)"
+LDAP_GROUP_MEMBER_ATTR = 'sczMember'
 
-LDAP_COS_BASE_DN =  os.environ['LDAP_COS_BASE_DN']  # dc=ordered,dc=datahubmaastricht,dc=nl
+LDAP_COS_BASE_DN =  os.environ['LDAP_COS_BASE_DN']
 LDAP_COS_SEARCH_FILTER = "(objectClass=organization)"
-LDAP_COS_ATTRIBUTES = ["o", "description","displayName"]       
+LDAP_COS_ATTRIBUTES = ["o", "description","displayName"]
 LDAP_COS_SCOPE = ldap.SCOPE_SUBTREE  #SCOPE_BASE, SCOPE_SUBTREE, SCOPE_ONELEVEL
 
 # iRODS config
@@ -72,7 +72,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("commit", default=False, action='store_true', help="write any updates/changes to iRODS")
     parser.add_argument("scheduled", default=False, action='store_true', help="if set runs every few minutes")
-    #parser.add_argument("print-ldap-info", default=False, action='store_true', help="print the internal model before writing to iRODS")
+    parser.add_argument("printLdapInfo", default=False, action='store_true', help="print the internal model before writing to iRODS")
 
     return parser.parse_args()
 
@@ -336,8 +336,13 @@ def syncable_irods_users(sess):
 
 # get all the relevant attributes of all users in LDAP, returns an array with dictionaries
 def get_users_from_ldap(l):
-    return for_ldap_entries_do(l, LDAP_USERS_BASE_DN, LDAP_USERS_SEARCH_FILTER, LdapUser.LDAP_ATTRIBUTES,
-                               LdapUser.create_for_ldap_entry)
+    ldap_users = for_ldap_entries_do(l, LDAP_USERS_BASE_DN, LDAP_USERS_SEARCH_FILTER,
+                                        LdapUser.LDAP_ATTRIBUTES,
+                                        LdapUser.create_for_ldap_entry)     
+    if settings.printLdapInfo:
+       for user in ldap_users:
+          logger.info( user )
+    return ldap_users
 
 
 ##########################################################
