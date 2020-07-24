@@ -17,12 +17,13 @@ def read_ldap_attribute(ldap_entry, key):
 
 ##########################################################
 
-def for_ldap_entries_do(c, base_dn, search_filter, retrieve_attributes, callback):
-    return_array = []
-    search_scope = ldap.SCOPE_SUBTREE
+def for_ldap_entries_do( c, base_dn, search_filter, retrieve_attributes, callback, scope=ldap.SCOPE_SUBTREE ):
+    return_array = []         
+    #search_scope = ldap.SCOPE_SUBTREE
+    #if scope: search_scope = scope
 
     # Perform the LDAP search
-    id = c.search(base_dn, search_scope, search_filter, retrieve_attributes)
+    id = c.search(base_dn, scope, search_filter, retrieve_attributes)
     # all = 1
     # If all is 0, search entries will be returned one at a time as they come in, via separate calls to result().
     # If all is 1, the search response will be returned in its entirety, i.e. after all entries and the final search

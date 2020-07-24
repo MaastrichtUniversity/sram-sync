@@ -13,6 +13,7 @@ logger = logging.getLogger('root')
 
 
 ##########################################################
+#multiple values will be lost!
 def get_all_avus(irods_user):
     existing_avus = {}
     for item in irods_user.metadata.items():
