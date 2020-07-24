@@ -129,8 +129,12 @@ class LdapUser:
             return
         logger.info("* Create a new irods user: %s" % self.uid)
         new_irods_user = irods_session.users.create(self.uid, 'rodsuser')
-        if self.email: new_irods_user.metadata.add(UserAVU.EMAIL.value, self.email)
-        if self.display_name: new_irods_user.metadata.add(UserAVU.DISPLAY_NAME.value, self.display_name)
+        if self.email: 
+           new_irods_user.metadata.add(UserAVU.EMAIL.value, self.email)
+           logger.info( "-- user {} added AVU: {} {}".format( self.uid, UserAVU.EMAIL.value, self.email ) )
+        if self.display_name: 
+           new_irods_user.metadata.add(UserAVU.DISPLAY_NAME.value, self.display_name)
+           logger.info( "-- user {} added AVU: {} {}".format( self.uid, UserAVU.DISPLAY_NAME.value, self.display_name ) )
         password = create_new_irods_user_password()
         irods_session.users.modify(self.uid, 'password', password)
         self.irods_user = new_irods_user
@@ -239,8 +243,10 @@ class LdapGroup:
        new_group = irods_session.user_groups.create(self.group_name)
        if self.display_name: 
           new_group.metadata.add(GroupAVU.DISPLAY_NAME.value, self.display_name)
+          logger.info( "-- group {} added AVU: {} {}".format( self.group_name, GroupAVU.DISPLAY_NAME.value, self.display_name ) )
        if self.description: 
           new_group.metadata.add(GroupAVU.DESCRIPTION.value, self.description)
+          logger.info( "-- group {} added AVU: {} {}".format( self.group_name, GroupAVU.DESCRIPTION.value, self.description ) )
        #should we add a reference to the CO as AVU?
        return self.irods_group
 #---
@@ -274,9 +280,7 @@ class LdapGroup:
 
         if not exists_group:
             try:
-                if not dry_run:
-                    #self.irods_group = sess.user_groups.create(self.group_name)
-                    self.irods_group = self.create_new_group( irods_session, dry_run )
+                self.irods_group = self.create_new_group( irods_session, dry_run )
                 logger.info("-- Group %s created" % self.group_name)
                 if created:
                     created()      
@@ -286,8 +290,7 @@ class LdapGroup:
                     failed()
         else:
         	  try:
-        	     if not dry_run:
-        	        self.irods_group = self.update_existing_group(irods_session, dry_run)
+        	     self.irods_group = self.update_existing_group(irods_session, dry_run)
         	     logger.debug("-- Group: " + self.group_name + " updated")
         	     if updated:
         	        updated()
@@ -315,7 +318,6 @@ def syncable_irods_users(sess):
     n = 0
     for result in query:
         n = n + 1
-#       if not result[User.name] in unsynced_users:     
         irodsUser = sess.users.get(result[User.name])
         syncAVUs = irodsUser.metadata.get_all( LDAP_SYNC_AVU )
         if not syncAVUs:
@@ -420,8 +422,6 @@ def remove_obsolete_irods_groups(sess, ldap_group_names, irods_group_names):
 
 def get_ldap_co( ldap_entry ):
     o = read_ldap_attribute( ldap_entry, 'o') 
-    #potentially dangerous!        
-    #logger.info( o )
     if ':' in o: 
        key = o.split(":")[1]
        displayName = read_ldap_attribute( ldap_entry,'displayName')   
