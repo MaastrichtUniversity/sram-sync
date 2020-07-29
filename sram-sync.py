@@ -61,8 +61,7 @@ IRODS_PORT = 1247
 IRODS_ZONE = "nlmumc"
 
 # irods groups and users with this AVU should not be synchronized (i.e. service-accounts, DH-ingest, ...)
-LDAP_SYNC_AVU = 'LDAPsync'
-
+LDAP_SYNC_AVU = 'ldapSync'
 
 # irods users who are not yet in SRAM should not be deleted
 # To DO: but they could be synched! And the flag could be removed during the syncing, see UserAVU
