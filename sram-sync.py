@@ -105,7 +105,7 @@ class GroupAVU(Enum):
 class LdapUser:
     LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName']  # all=*
 
-    def __init__(self, uid, display_name, email):
+    def __init__(self, uid, cn, email, display_name):
         self.uid = uid
         self.display_name = display_name
         self.email = email
@@ -120,9 +120,9 @@ class LdapUser:
         uid = read_ldap_attribute(ldap_entry, 'uid')
         mail = read_ldap_attribute(ldap_entry, 'mail')
         cn = read_ldap_attribute(ldap_entry, 'cn')
-        # display_name = read_ldap_attribute(ldap_entry, 'displayName')
-        # TO DO: here we could decided weather to use the cn or uid as displayName...
-        return LdapUser(uid, cn, mail)
+        display_name = read_ldap_attribute(ldap_entry, 'displayName')
+        # TO DO: here we could decided whether to use the cn or uid as displayName...
+        return LdapUser(uid, cn, mail, display_name)
 
     # simply write the model user to irods,
     # set password and AVUs for existing attributes
