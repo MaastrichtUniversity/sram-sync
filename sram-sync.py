@@ -91,8 +91,10 @@ def create_new_irods_user_password():
 
 class UserAVU(Enum):
     DISPLAY_NAME = 'displayName'
-    EMAIL = "email"
+    EMAIL = 'email'
     PENDING_INVITE = 'pendingSramInvite'
+    EXTERNAL_ID = 'voPersonExternalID'
+    UNIQUE_ID = 'eduPersonUniqueID'
 
 
 class GroupAVU(Enum):
@@ -103,26 +105,50 @@ class GroupAVU(Enum):
 ##########################################################
 
 class LdapUser:
-    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName']  # all=*
+    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName', 'voPersonExternalID', 'eduPersonUniqueId']  # all=*
 
-    def __init__(self, uid, cn, email, display_name):
+    def __init__(self, uid, unique_id, cn, email, display_name, external_id ):
         self.uid = uid
+        self.unique_id = unique_id
         self.display_name = display_name
         self.email = email
+        self.external_id = external_id
         self.irods_user = None
 
     def __repr__(self):
-        return "User( uid:{}, displayName: {}, email: {}, iRodsUser: {})".format(self.uid, self.display_name,
-                                                                                 self.email, self.irods_user)
+        return "User( uid:{}, eduPersonUniqueID: {}, displayName: {}, email: {}, voPersonExternalID: {}, iRodsUser: {})".format(
+           self.uid, self.unique_id, self.display_name, self.email, self.external_id, self.irods_user )
+
+    @classmethod
+    def isUidAndUniqueIdCombinationValid( cls, irods_session, uid, unique_id, update ):
+       if not uid: 
+          exit()
+       if not unique_id:
+          exit()
+
+       if not update:  
+          pass
+          #check if uniqueId is used by another user        
+          #iquest "select META_DATA_ATTR_VALUE, META_DATA_ATTR_NAME WHERE META_DATA_ATTR_NAME = 'voPersonUniqueId' and META_DATA_ATTR_VALUE = '{}'".format( uniqueId )
+       if update:
+          pass
+          #check if user uses exactly this uniqueId
+          #get_one(self, key):      
+          # results = session.query(User, UserMeta).filter( \
+          #   Criterion('=', CollectionMeta.name, 'type')).filter( \
+          #   Criterion('like', CollectionMeta.value, '%Project%'))
+       return True
 
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
-        uid = read_ldap_attribute(ldap_entry, 'uid')
+        uid = read_ldap_attribute(ldap_entry, 'uid')    
+        unique_id = read_ldap_attribute(ldap_entry, 'eduPersonUniqueId')
         mail = read_ldap_attribute(ldap_entry, 'mail')
         cn = read_ldap_attribute(ldap_entry, 'cn')
         display_name = read_ldap_attribute(ldap_entry, 'displayName')
+        external_id = read_ldap_attribute(ldap_entry, 'voPersonExternalID')
         # TO DO: here we could decided whether to use the cn or uid as displayName...
-        return LdapUser(uid, cn, mail, display_name)
+        return LdapUser(uid, unique_id, cn, mail, display_name, external_id)
 
     # simply write the model user to irods,
     # set password and AVUs for existing attributes
@@ -130,13 +156,24 @@ class LdapUser:
         if dry_run:
             return
         logger.info("* Create a new irods user: %s" % self.uid)
+        #if not self.unique_id:
+        #   logger.error( "-- MISSING voPersonUniqueId for user: %s" % self.uid )
+        #   return
+        if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=False ) :
+           logger.error( "-- for user {} the provided voPersonUniqueID {} is invalid!".format( self.uid, self.unique_id))
+           exit()
         new_irods_user = irods_session.users.create(self.uid, 'rodsuser')
+        new_irods_user.metadata.add(UserAVU.UNIQUE_ID.value, self.unique_id)
+        logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.UNIQUE_ID.value, self.unique_id))
         if self.email:
             new_irods_user.metadata.add(UserAVU.EMAIL.value, self.email)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EMAIL.value, self.email))
         if self.display_name:
             new_irods_user.metadata.add(UserAVU.DISPLAY_NAME.value, self.display_name)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
+        if self.external_id:
+            new_irods_user.metadata.add(UserAVU.EXTERNAL_ID.value, self.external_id)
+            logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
         password = create_new_irods_user_password()
         irods_session.users.modify(self.uid, 'password', password)
         self.irods_user = new_irods_user
@@ -155,13 +192,17 @@ class LdapUser:
             # read current AVUs and change if needed
             existing_avus = get_all_avus(self.irods_user)
             logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
+            if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=True ) :
+               logger.error( "-- for user {} the provided voPersonUniqueID {} is invalid!".format( self.uid, self.unique_id))
+               exit()
             # careful: because the list of existing AVUs is not updated changing a key multiple times will lead to
             # strange behavior!
             if set_singular_avu(self.irods_user, UserAVU.EMAIL.value, self.email):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EMAIL.value, self.email))
             if set_singular_avu(self.irods_user, UserAVU.DISPLAY_NAME.value, self.display_name):
-                logger.info(
-                    "-- user {} updated AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
+                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
+            if set_singular_avu(self.irods_user, UserAVU.EXTERNAL_ID.value, self.external_id):
+                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
             if set_singular_avu(self.irods_user, UserAVU.PENDING_INVITE.value, None):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.PENDING_INVITE.value, None))
         except iRODSException as error:
@@ -202,8 +243,7 @@ class LdapUser:
                 logger.error("-- User update error: " + str(e))
                 if failed:
                     failed()
-
-
+   
 ##########################################################
 class LdapGroup:
     LDAP_ATTRIBUTES = ['*']  # all=*
@@ -655,7 +695,7 @@ def main(dry_run):
 def sigterm_handler(_signal, _stack_frame):
     sys.exit(0)
 
-SLEEP_INTERVAL_MINUTES=0.5
+SLEEP_INTERVAL_MINUTES=5
 
 if __name__ == "__main__":
     # Handle the SIGTERM signal from Docker
