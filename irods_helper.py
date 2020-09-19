@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import time
 
 from irods.exception import NetworkException
@@ -22,7 +23,11 @@ def get_all_avus(irods_user):
 
 
 ##########################################################
-
+                                                     
+# check if this is maybe more complicated then it has to be;
+#   We can also use Python's item indexing syntax to perform the 
+#   equivalent of an "imeta set ...", e.g. overwriting all AVU's 
+#   with a name field of "key2" in a single update
 def set_singular_avu(irods_user, avu_key, avu_value):
     changes = False
     if not avu_value:

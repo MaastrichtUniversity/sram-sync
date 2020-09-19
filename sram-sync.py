@@ -15,6 +15,7 @@ from irods.exception import PycommandsException, iRODSException, UserDoesNotExis
     CAT_INVALID_GROUP, CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME
 from irods.models import User, UserGroup
 from irods.user import iRODSUser, iRODSUserGroup
+from irods.models import UserMeta
 
 from irods_helper import get_all_avus, set_singular_avu, get_irods_connection
 from ldap_helper import get_ldap_connection, for_ldap_entries_do, read_ldap_attribute
@@ -120,24 +121,37 @@ class LdapUser:
            self.uid, self.unique_id, self.display_name, self.email, self.external_id, self.irods_user )
 
     @classmethod
-    def isUidAndUniqueIdCombinationValid( cls, irods_session, uid, unique_id, update ):
-       if not uid: 
-          exit()
+    def isUidAndUniqueIdCombinationValid( cls, irods_session, uid, unique_id, update, existing_avus ):
+       if not uid:
+          logger.error("User without uid is invalid! The eduPersonUniqueId: {}".format( unique_id ) )
+          sys.exit( "panic, bailing out" )
        if not unique_id:
-          exit()
+          logger.error("User without eduPersonUniqueId is invalid! The uid: {}" .format( uid ) )
+          sys.exit( "panic, bailing out" )
 
        if not update:  
           pass
           #check if uniqueId is used by another user        
           #iquest "select META_DATA_ATTR_VALUE, META_DATA_ATTR_NAME WHERE META_DATA_ATTR_NAME = 'voPersonUniqueId' and META_DATA_ATTR_VALUE = '{}'".format( uniqueId )
-       if update:
-          pass
-          #check if user uses exactly this uniqueId
-          #get_one(self, key):      
-          # results = session.query(User, UserMeta).filter( \
-          #   Criterion('=', CollectionMeta.name, 'type')).filter( \
-          #   Criterion('like', CollectionMeta.value, '%Project%'))
-       return True
+          query = irods_session.query(User).filter(UserMeta.name == UserAVU.UNIQUE_ID.value, UserMeta.value == unique_id )
+          if 0 == len( list( query ) ):
+             return True
+          else:
+             logger.error("User with uid {} and eduPersonUniqeId {} cant be inserted, since eduPersonUniqueId is already used!".format( uid, unique_id ) )
+             sys.exit( "panic, bailing out" )
+          #iRODSMetaCollection(
+                 #self.manager.sess.metadata, User, self.name)
+          
+       if update and existing_avus:
+          existing_unique_id = existing_avus[UserAVU.UNIQUE_ID.value]
+          if existing_unique_id == unique_id:
+             return True
+          else:    
+             logger.error("User with uid {} and eduPersonUniqeId {} cant be updated with new eduPersonUniqueId {}!".format( uid, existing_unique_id, unique_id ) )
+             sys.exit( "panic, bailing out" )
+       logger.error( "Unexpected state for uid: {}, uniqueId: {}, update: {}, existing_avus: {}".format( uid, unique_id, update, existing_avus) )
+       sys.exit( "panic, bailing out" )
+       return False
 
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
@@ -159,7 +173,7 @@ class LdapUser:
         #if not self.unique_id:
         #   logger.error( "-- MISSING voPersonUniqueId for user: %s" % self.uid )
         #   return
-        if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=False ) :
+        if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=False, existing_avus=None ) :
            logger.error( "-- for user {} the provided voPersonUniqueID {} is invalid!".format( self.uid, self.unique_id))
            exit()
         new_irods_user = irods_session.users.create(self.uid, 'rodsuser')
@@ -192,7 +206,7 @@ class LdapUser:
             # read current AVUs and change if needed
             existing_avus = get_all_avus(self.irods_user)
             logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
-            if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=True ) :
+            if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=True, existing_avus=existing_avus ) :
                logger.error( "-- for user {} the provided voPersonUniqueID {} is invalid!".format( self.uid, self.unique_id))
                exit()
             # careful: because the list of existing AVUs is not updated changing a key multiple times will lead to
