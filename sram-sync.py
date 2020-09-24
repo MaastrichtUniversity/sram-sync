@@ -95,6 +95,7 @@ class UserAVU(Enum):
     EMAIL = 'email'
     PENDING_INVITE = 'pendingSramInvite'
     EXTERNAL_ID = 'voPersonExternalID'
+    EXTERNAL_AFFILIATION = 'voPersonExternalAffiliation'
     UNIQUE_ID = 'eduPersonUniqueID'
 
 
@@ -106,19 +107,20 @@ class GroupAVU(Enum):
 ##########################################################
 
 class LdapUser:
-    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName', 'voPersonExternalID', 'eduPersonUniqueId']  # all=*
+    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName', 'voPersonExternalID', 'voPersonExternalAffiliation', 'eduPersonUniqueId']  # all=*
 
-    def __init__(self, uid, unique_id, cn, email, display_name, external_id ):
+    def __init__(self, uid, unique_id, cn, email, display_name, external_id, external_affiliation):
         self.uid = uid
         self.unique_id = unique_id
         self.display_name = display_name
         self.email = email
         self.external_id = external_id
+        self.external_affiliation = external_affiliation
         self.irods_user = None
 
     def __repr__(self):
-        return "User( uid:{}, eduPersonUniqueID: {}, displayName: {}, email: {}, voPersonExternalID: {}, iRodsUser: {})".format(
-           self.uid, self.unique_id, self.display_name, self.email, self.external_id, self.irods_user )
+        return "User( uid:{}, eduPersonUniqueID: {}, displayName: {}, email: {}, voPersonExternalID: {}, voPersonExternalAffiliation: {}, iRodsUser: {})".format(
+           self.uid, self.unique_id, self.display_name, self.email, self.external_id, self.external_affiliation, self.irods_user )
 
     @classmethod
     def isUidAndUniqueIdCombinationValid( cls, irods_session, uid, unique_id, update, existing_avus ):
@@ -161,8 +163,9 @@ class LdapUser:
         cn = read_ldap_attribute(ldap_entry, 'cn')
         display_name = read_ldap_attribute(ldap_entry, 'displayName')
         external_id = read_ldap_attribute(ldap_entry, 'voPersonExternalID')
+        external_affiliation = read_ldap_attribute(ldap_entry, 'voPersonExternalAffiliation')
         # TO DO: here we could decided whether to use the cn or uid as displayName...
-        return LdapUser(uid, unique_id, cn, mail, display_name, external_id)
+        return LdapUser(uid, unique_id, cn, mail, display_name, external_id, external_affiliation)
 
     # simply write the model user to irods,
     # set password and AVUs for existing attributes
@@ -188,6 +191,9 @@ class LdapUser:
         if self.external_id:
             new_irods_user.metadata.add(UserAVU.EXTERNAL_ID.value, self.external_id)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
+        if self.external_affiliation:
+            new_irods_user.metadata.add(UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation)
+            logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation))
         password = create_new_irods_user_password()
         irods_session.users.modify(self.uid, 'password', password)
         self.irods_user = new_irods_user
@@ -217,6 +223,8 @@ class LdapUser:
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
             if set_singular_avu(self.irods_user, UserAVU.EXTERNAL_ID.value, self.external_id):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
+            if set_singular_avu(self.irods_user, UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation):
+                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation))
             if set_singular_avu(self.irods_user, UserAVU.PENDING_INVITE.value, None):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.PENDING_INVITE.value, None))
         except iRODSException as error:
@@ -274,7 +282,7 @@ class LdapGroup:
         return "Group( group_name:{}, member_uids: {},  irods_group: {}, display_name: {})".format(self.group_name,
                                                                                                    self.member_uids,
                                                                                                    self.irods_group,
-                                                                                                   self.displayName)
+                                                                                                   self.display_name)
 
     @classmethod
     # b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl'
