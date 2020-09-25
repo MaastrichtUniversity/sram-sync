@@ -545,7 +545,7 @@ def get_ldap_groups(l, group_key_2_co):
 
     for group in ldap_groups:
         # dangerous: string parsing!
-        logger.info("LDAP Group: {}".format(group.group_name))
+        logger.debug("LDAP Group: {}".format(group.group_name))
         co_key = group.group_name.split(":")[0]
         # Test this change!
         # group_name_2_groups[group.group_name] = group
@@ -611,9 +611,9 @@ def sync_ldap_groups_to_irods(ldap, irods, dry_run):
     logger.info("Syncing groups to irods:")
 
     group_key_2_co = get_ldap_cos(ldap)
-    logger.debug("* LDAP cos found: {}".format(len(group_key_2_co)))
+    logger.info("* LDAP cos found: {}".format(len(group_key_2_co)))
     group_name_2_group = get_ldap_groups(ldap, group_key_2_co)
-    logger.debug("* LDAP groups found: {}".format(len(group_name_2_group)))
+    logger.info("* LDAP groups found: {}".format(len(group_name_2_group)))
 
     syncable_irods_groups = get_syncable_irods_groups(irods)
 
