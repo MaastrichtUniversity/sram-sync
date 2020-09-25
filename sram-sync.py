@@ -219,9 +219,8 @@ class LdapUser:
             logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
             if not LdapUser.is_uid_unique_id_combination_valid(irods_session, self.uid, self.unique_id, update=True,
                                                                existing_avus=existing_avus):
-                logger.error(
-                    "-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
-                exit()
+                raise Exception("-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
+
             # careful: because the list of existing AVUs is not updated changing a key multiple times will lead to
             # strange behavior!
             if set_singular_avu(self.irods_user, UserAVU.EMAIL.value, self.email):
