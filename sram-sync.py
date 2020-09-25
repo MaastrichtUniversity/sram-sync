@@ -70,8 +70,6 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("commit", default=False, action='store_true', help="write any updates/changes to iRODS")
     parser.add_argument("scheduled", default=False, action='store_true', help="if set runs every few minutes")
-    parser.add_argument("printLdapInfo", default=False, action='store_true',
-                        help="print the internal model before writing to iRODS")
 
     return parser.parse_args()
 
@@ -436,9 +434,10 @@ def get_users_from_ldap(l):
     ldap_users = for_ldap_entries_do(l, LDAP_USERS_BASE_DN, LDAP_USERS_SEARCH_FILTER,
                                      LdapUser.LDAP_ATTRIBUTES,
                                      LdapUser.create_for_ldap_entry)
-    if settings.printLdapInfo:
-        for user in ldap_users:
-            logger.info(user)
+
+    for user in ldap_users:
+        logger.debug(user)
+
     return ldap_users
 
 
