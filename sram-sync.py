@@ -166,7 +166,6 @@ class LdapUser:
         display_name = read_ldap_attribute(ldap_entry, 'displayName')
         external_id = read_ldap_attribute(ldap_entry, 'voPersonExternalID')
         external_affiliation = read_ldap_attribute(ldap_entry, 'voPersonExternalAffiliation')
-        # TO DO: here we could decided whether to use the cn or uid as displayName...
         return LdapUser(uid, unique_id, cn, mail, display_name, external_id, external_affiliation)
 
     # simply write the model user to irods,
@@ -341,7 +340,7 @@ class LdapGroup:
     # ---
     def update_existing_group(self, irods_session, dry_run):
         if dry_run:
-            return self.irods_user
+            return self.irods_group
         logger.debug("-- changing existing irods group: {}".format(self.group_name))
         try:
             # read current AVUs and change if needed
@@ -423,7 +422,7 @@ def syncable_irods_users(sess):
             logger.error("found unexpected number of AVUs for key ldapSync and user: {} {}".format(irodsUser.name,
                                                                                                    len(syncAVUs)))
 
-    logger.debug("iRods users found: {} (allowed for synchronization: {})".format(n, len(irods_user_names_set)))
+    logger.debug("iRODS users found: {} (allowed for synchronization: {})".format(n, len(irods_user_names_set)))
     return irods_user_names_set
 
 
@@ -469,7 +468,7 @@ def remove_obsolete_irods_users(sess, ldap_users, irods_users):
 ##########################################################
 
 def sync_ldap_users_to_irods(ldap, irods, dry_run):
-    logger.info("Syncing users to iRods:")
+    logger.info("Syncing users to iRODS:")
 
     ldap_users = get_users_from_ldap(ldap)
     logger.info("* LDAP users found: %d" % len(ldap_users))
@@ -481,7 +480,7 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
         remove_obsolete_irods_users(irods, ldap_users, irods_users)
 
     # Loop over ldap users and create or update as necessary
-    logger.debug("* Syncing {} found LDAP entries to iRods:".format(len(ldap_users)))
+    logger.debug("* Syncing {} found LDAP entries to iRODS:".format(len(ldap_users)))
     n = 0
     for user in ldap_users:
         n = n + 1
@@ -572,7 +571,6 @@ def remove_user_from_group(sess, group_name, user_name):
     try:
         irods_group.removemember(user_name)
         logger.info("-- User: " + user_name + " removed from group " + group_name)
-    # TO DO: This should not catch all exceptions!
     except (PycommandsException, iRODSException) as e:
         logger.error("-- could not remove user {} from group {}. '{}'".format(user_name, group_name, e))
 
@@ -601,7 +599,7 @@ def get_syncable_irods_groups(sess):
             logger.error("found unexpected number of AVUs for key ldapSync and group: {} {}".format(irodsGroup.name,
                                                                                                     len(syncAVUs)))
 
-    logger.debug("iRods groups found: {} (allowed for synchronization: {})".format(n, len(irods_group_names_set)))
+    logger.debug("iRODS groups found: {} (allowed for synchronization: {})".format(n, len(irods_group_names_set)))
     return irods_group_names_set
 
 
