@@ -8,13 +8,12 @@ import sys
 import time
 from datetime import datetime
 from enum import Enum
-import ldap
 
+import ldap
 from irods.column import Criterion
 from irods.exception import PycommandsException, iRODSException, UserDoesNotExist, UserGroupDoesNotExist, \
-    CAT_INVALID_GROUP, CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME
-from irods.models import User, UserGroup
-from irods.user import iRODSUser, iRODSUserGroup
+    CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME
+from irods.models import User
 from irods.models import UserMeta
 
 from irods_helper import get_all_avus, set_singular_avu, get_irods_connection
@@ -64,6 +63,7 @@ IRODS_ZONE = "nlmumc"
 # irods groups and users with this AVU should not be synchronized (i.e. service-accounts, DH-ingest, ...)
 LDAP_SYNC_AVU = 'ldapSync'
 
+
 # irods users who are not yet in SRAM should not be deleted
 # To DO: but they could be synched! And the flag could be removed during the syncing, see UserAVU
 
@@ -73,7 +73,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("commit", default=False, action='store_true', help="write any updates/changes to iRODS")
     parser.add_argument("scheduled", default=False, action='store_true', help="if set runs every few minutes")
-    parser.add_argument("printLdapInfo", default=False, action='store_true', help="print the internal model before writing to iRODS")
+    parser.add_argument("printLdapInfo", default=False, action='store_true',
+                        help="print the internal model before writing to iRODS")
 
     return parser.parse_args()
 
@@ -107,7 +108,8 @@ class GroupAVU(Enum):
 ##########################################################
 
 class LdapUser:
-    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName', 'voPersonExternalID', 'voPersonExternalAffiliation', 'eduPersonUniqueId']  # all=*
+    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName', 'voPersonExternalID', 'voPersonExternalAffiliation',
+                       'eduPersonUniqueId']  # all=*
 
     def __init__(self, uid, unique_id, cn, email, display_name, external_id, external_affiliation):
         self.uid = uid
@@ -120,44 +122,52 @@ class LdapUser:
 
     def __repr__(self):
         return "User( uid:{}, eduPersonUniqueID: {}, displayName: {}, email: {}, voPersonExternalID: {}, voPersonExternalAffiliation: {}, iRodsUser: {})".format(
-           self.uid, self.unique_id, self.display_name, self.email, self.external_id, self.external_affiliation, self.irods_user )
+            self.uid, self.unique_id, self.display_name, self.email, self.external_id, self.external_affiliation,
+            self.irods_user)
 
     @classmethod
-    def isUidAndUniqueIdCombinationValid( cls, irods_session, uid, unique_id, update, existing_avus ):
-       if not uid:
-          logger.error("User without uid is invalid! The eduPersonUniqueId: {}".format( unique_id ) )
-          sys.exit( "panic, bailing out" )
-       if not unique_id:
-          logger.error("User without eduPersonUniqueId is invalid! The uid: {}" .format( uid ) )
-          sys.exit( "panic, bailing out" )
+    def isUidAndUniqueIdCombinationValid(cls, irods_session, uid, unique_id, update, existing_avus):
+        if not uid:
+            logger.error("User without uid is invalid! The eduPersonUniqueId: {}".format(unique_id))
+            sys.exit("panic, bailing out")
+        if not unique_id:
+            logger.error("User without eduPersonUniqueId is invalid! The uid: {}".format(uid))
+            sys.exit("panic, bailing out")
 
-       if not update:  
-          pass
-          #check if uniqueId is used by another user        
-          #iquest "select META_DATA_ATTR_VALUE, META_DATA_ATTR_NAME WHERE META_DATA_ATTR_NAME = 'voPersonUniqueId' and META_DATA_ATTR_VALUE = '{}'".format( uniqueId )
-          query = irods_session.query(User).filter(UserMeta.name == UserAVU.UNIQUE_ID.value, UserMeta.value == unique_id )
-          if 0 == len( list( query ) ):
-             return True
-          else:
-             logger.error("User with uid {} and eduPersonUniqeId {} cant be inserted, since eduPersonUniqueId is already used!".format( uid, unique_id ) )
-             sys.exit( "panic, bailing out" )
-          #iRODSMetaCollection(
-                 #self.manager.sess.metadata, User, self.name)
-          
-       if update and existing_avus:
-          existing_unique_id = existing_avus[UserAVU.UNIQUE_ID.value]
-          if existing_unique_id == unique_id:
-             return True
-          else:    
-             logger.error("User with uid {} and eduPersonUniqeId {} cant be updated with new eduPersonUniqueId {}!".format( uid, existing_unique_id, unique_id ) )
-             sys.exit( "panic, bailing out" )
-       logger.error( "Unexpected state for uid: {}, uniqueId: {}, update: {}, existing_avus: {}".format( uid, unique_id, update, existing_avus) )
-       sys.exit( "panic, bailing out" )
-       return False
+        if not update:
+            pass
+            # check if uniqueId is used by another user
+            # iquest "select META_DATA_ATTR_VALUE, META_DATA_ATTR_NAME WHERE META_DATA_ATTR_NAME = 'voPersonUniqueId' and META_DATA_ATTR_VALUE = '{}'".format( uniqueId )
+            query = irods_session.query(User).filter(UserMeta.name == UserAVU.UNIQUE_ID.value,
+                                                     UserMeta.value == unique_id)
+            if 0 == len(list(query)):
+                return True
+            else:
+                logger.error(
+                    "User with uid {} and eduPersonUniqeId {} cant be inserted, since eduPersonUniqueId is already used!".format(
+                        uid, unique_id))
+                sys.exit("panic, bailing out")
+            # iRODSMetaCollection(
+            # self.manager.sess.metadata, User, self.name)
+
+        if update and existing_avus:
+            existing_unique_id = existing_avus[UserAVU.UNIQUE_ID.value]
+            if existing_unique_id == unique_id:
+                return True
+            else:
+                logger.error(
+                    "User with uid {} and eduPersonUniqeId {} cant be updated with new eduPersonUniqueId {}!".format(
+                        uid, existing_unique_id, unique_id))
+                sys.exit("panic, bailing out")
+        logger.error(
+            "Unexpected state for uid: {}, uniqueId: {}, update: {}, existing_avus: {}".format(uid, unique_id, update,
+                                                                                               existing_avus))
+        sys.exit("panic, bailing out")
+        return False
 
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
-        uid = read_ldap_attribute(ldap_entry, 'uid')    
+        uid = read_ldap_attribute(ldap_entry, 'uid')
         unique_id = read_ldap_attribute(ldap_entry, 'eduPersonUniqueId')
         mail = read_ldap_attribute(ldap_entry, 'mail')
         cn = read_ldap_attribute(ldap_entry, 'cn')
@@ -173,12 +183,13 @@ class LdapUser:
         if dry_run:
             return
         logger.info("* Create a new irods user: %s" % self.uid)
-        #if not self.unique_id:
+        # if not self.unique_id:
         #   logger.error( "-- MISSING voPersonUniqueId for user: %s" % self.uid )
         #   return
-        if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=False, existing_avus=None ) :
-           logger.error( "-- for user {} the provided voPersonUniqueID {} is invalid!".format( self.uid, self.unique_id))
-           exit()
+        if not LdapUser.isUidAndUniqueIdCombinationValid(irods_session, self.uid, self.unique_id, update=False,
+                                                         existing_avus=None):
+            logger.error("-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
+            exit()
         new_irods_user = irods_session.users.create(self.uid, 'rodsuser')
         new_irods_user.metadata.add(UserAVU.UNIQUE_ID.value, self.unique_id)
         logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.UNIQUE_ID.value, self.unique_id))
@@ -193,7 +204,8 @@ class LdapUser:
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
         if self.external_affiliation:
             new_irods_user.metadata.add(UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation)
-            logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation))
+            logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value,
+                                                             self.external_affiliation))
         password = create_new_irods_user_password()
         irods_session.users.modify(self.uid, 'password', password)
         self.irods_user = new_irods_user
@@ -212,19 +224,24 @@ class LdapUser:
             # read current AVUs and change if needed
             existing_avus = get_all_avus(self.irods_user)
             logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
-            if not LdapUser.isUidAndUniqueIdCombinationValid( irods_session, self.uid, self.unique_id, update=True, existing_avus=existing_avus ) :
-               logger.error( "-- for user {} the provided voPersonUniqueID {} is invalid!".format( self.uid, self.unique_id))
-               exit()
+            if not LdapUser.isUidAndUniqueIdCombinationValid(irods_session, self.uid, self.unique_id, update=True,
+                                                             existing_avus=existing_avus):
+                logger.error(
+                    "-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
+                exit()
             # careful: because the list of existing AVUs is not updated changing a key multiple times will lead to
             # strange behavior!
             if set_singular_avu(self.irods_user, UserAVU.EMAIL.value, self.email):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EMAIL.value, self.email))
             if set_singular_avu(self.irods_user, UserAVU.DISPLAY_NAME.value, self.display_name):
-                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
+                logger.info(
+                    "-- user {} updated AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
             if set_singular_avu(self.irods_user, UserAVU.EXTERNAL_ID.value, self.external_id):
-                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
+                logger.info(
+                    "-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
             if set_singular_avu(self.irods_user, UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation):
-                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation))
+                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value,
+                                                                   self.external_affiliation))
             if set_singular_avu(self.irods_user, UserAVU.PENDING_INVITE.value, None):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.PENDING_INVITE.value, None))
         except iRODSException as error:
@@ -265,7 +282,8 @@ class LdapUser:
                 logger.error("-- User update error: " + str(e))
                 if failed:
                     failed()
-   
+
+
 ##########################################################
 class LdapGroup:
     LDAP_ATTRIBUTES = ['*']  # all=*
@@ -297,8 +315,8 @@ class LdapGroup:
     # ---
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
-        group_name = read_ldap_attribute(ldap_entry, 'cn')       
-        
+        group_name = read_ldap_attribute(ldap_entry, 'cn')
+
         # Focus on CO groups only.
         # If we need to sync other groups as well, we need to adjust for the ':' character,
         # since iRODS will fail on groupnames with that character!
@@ -310,8 +328,8 @@ class LdapGroup:
         # DNs: [ b'cn=empty-membership-placeholder',  b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl', ...]
         group_member_dns = ldap_entry.get(LDAP_GROUP_MEMBER_ATTR, [b""])
         group_member_uids = list(
-            filter(lambda x: x is not None, map(LdapGroup.get_group_member_uids, group_member_dns))) 
-            
+            filter(lambda x: x is not None, map(LdapGroup.get_group_member_uids, group_member_dns)))
+
         return LdapGroup(group_name, group_member_uids)
 
     # ---
@@ -538,9 +556,9 @@ def get_ldap_groups(l, group_key_2_co):
     for group in ldap_groups:
         # dangerous: string parsing!
         logger.info("LDAP Group: {}".format(group.group_name))
-        co_key = group.group_name.split(":")[0]   
-        #Test this change!
-        #group_name_2_groups[group.group_name] = group
+        co_key = group.group_name.split(":")[0]
+        # Test this change!
+        # group_name_2_groups[group.group_name] = group
         group_name_2_groups[co_key] = group
 
     return group_name_2_groups
@@ -717,7 +735,8 @@ def main(dry_run):
 def sigterm_handler(_signal, _stack_frame):
     sys.exit(0)
 
-SLEEP_INTERVAL_MINUTES=5
+
+SLEEP_INTERVAL_MINUTES = 5
 
 if __name__ == "__main__":
     # Handle the SIGTERM signal from Docker
@@ -730,7 +749,7 @@ if __name__ == "__main__":
             while True:
                 seconds = int(SLEEP_INTERVAL_MINUTES * 60)
                 logger.info("Sleeping for {} seconds".format(seconds))
-                time.sleep( seconds )
+                time.sleep(seconds)
                 main(not settings.commit)
         sys.exit(exit_code)
     finally:
