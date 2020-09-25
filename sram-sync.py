@@ -64,9 +64,6 @@ IRODS_ZONE = "nlmumc"
 LDAP_SYNC_AVU = 'ldapSync'
 
 
-# irods users who are not yet in SRAM should not be deleted
-# To DO: but they could be synched! And the flag could be removed during the syncing, see UserAVU
-
 ##########################################################
 
 def parse_arguments():
@@ -109,7 +106,7 @@ class GroupAVU(Enum):
 
 class LdapUser:
     LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName', 'voPersonExternalID', 'voPersonExternalAffiliation',
-                       'eduPersonUniqueId']  # all=*
+                       'eduPersonUniqueId']
 
     def __init__(self, uid, unique_id, cn, email, display_name, external_id, external_affiliation):
         self.uid = uid
@@ -126,13 +123,13 @@ class LdapUser:
             self.irods_user)
 
     @classmethod
-    def isUidAndUniqueIdCombinationValid(cls, irods_session, uid, unique_id, update, existing_avus):
+    def is_uid_unique_id_combination_valid(cls, irods_session, uid, unique_id, update, existing_avus):
         if not uid:
             logger.error("User without uid is invalid! The eduPersonUniqueId: {}".format(unique_id))
-            sys.exit("panic, bailing out")
+            return False
         if not unique_id:
             logger.error("User without eduPersonUniqueId is invalid! The uid: {}".format(uid))
-            sys.exit("panic, bailing out")
+            return False
 
         if not update:
             pass
@@ -146,9 +143,7 @@ class LdapUser:
                 logger.error(
                     "User with uid {} and eduPersonUniqeId {} cant be inserted, since eduPersonUniqueId is already used!".format(
                         uid, unique_id))
-                sys.exit("panic, bailing out")
-            # iRODSMetaCollection(
-            # self.manager.sess.metadata, User, self.name)
+                return False
 
         if update and existing_avus:
             existing_unique_id = existing_avus[UserAVU.UNIQUE_ID.value]
@@ -158,12 +153,12 @@ class LdapUser:
                 logger.error(
                     "User with uid {} and eduPersonUniqeId {} cant be updated with new eduPersonUniqueId {}!".format(
                         uid, existing_unique_id, unique_id))
-                sys.exit("panic, bailing out")
-        logger.error(
-            "Unexpected state for uid: {}, uniqueId: {}, update: {}, existing_avus: {}".format(uid, unique_id, update,
+                return False
+        else:
+            logger.error(
+                "Unexpected state for uid: {}, uniqueId: {}, update: {}, existing_avus: {}".format(uid, unique_id, update,
                                                                                                existing_avus))
-        sys.exit("panic, bailing out")
-        return False
+            return False
 
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
@@ -183,13 +178,11 @@ class LdapUser:
         if dry_run:
             return
         logger.info("* Create a new irods user: %s" % self.uid)
-        # if not self.unique_id:
-        #   logger.error( "-- MISSING voPersonUniqueId for user: %s" % self.uid )
-        #   return
-        if not LdapUser.isUidAndUniqueIdCombinationValid(irods_session, self.uid, self.unique_id, update=False,
-                                                         existing_avus=None):
-            logger.error("-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
-            exit()
+
+        if not LdapUser.is_uid_unique_id_combination_valid(irods_session, self.uid, self.unique_id, update=False,
+                                                           existing_avus=None):
+            raise Exception("For user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
+
         new_irods_user = irods_session.users.create(self.uid, 'rodsuser')
         new_irods_user.metadata.add(UserAVU.UNIQUE_ID.value, self.unique_id)
         logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.UNIQUE_ID.value, self.unique_id))
@@ -210,8 +203,8 @@ class LdapUser:
         irods_session.users.modify(self.uid, 'password', password)
         self.irods_user = new_irods_user
 
-        # TO DO: is this the correct place? Any other must have groups that I'm missing?
         # Add the user to the group DH-ingest (= ensures that user is able to create and ingest dropzones)
+        # TODO: Make this better configurable
         add_user_to_group(irods_session, "DH-ingest", self.uid)
 
         return self.irods_user
@@ -224,8 +217,8 @@ class LdapUser:
             # read current AVUs and change if needed
             existing_avus = get_all_avus(self.irods_user)
             logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
-            if not LdapUser.isUidAndUniqueIdCombinationValid(irods_session, self.uid, self.unique_id, update=True,
-                                                             existing_avus=existing_avus):
+            if not LdapUser.is_uid_unique_id_combination_valid(irods_session, self.uid, self.unique_id, update=True,
+                                                               existing_avus=existing_avus):
                 logger.error(
                     "-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
                 exit()
