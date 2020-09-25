@@ -132,7 +132,6 @@ class LdapUser:
             return False
 
         if not update:
-            pass
             # check if uniqueId is used by another user
             # iquest "select META_DATA_ATTR_VALUE, META_DATA_ATTR_NAME WHERE META_DATA_ATTR_NAME = 'voPersonUniqueId' and META_DATA_ATTR_VALUE = '{}'".format( uniqueId )
             query = irods_session.query(User).filter(UserMeta.name == UserAVU.UNIQUE_ID.value,
