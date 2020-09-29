@@ -8,13 +8,13 @@ import sys
 import time
 from datetime import datetime
 from enum import Enum
-import ldap
 
+import ldap
 from irods.column import Criterion
 from irods.exception import PycommandsException, iRODSException, UserDoesNotExist, UserGroupDoesNotExist, \
     CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME
-from irods.models import User, UserGroup
-from irods.user import iRODSUser, iRODSUserGroup
+from irods.models import User
+from irods.models import UserMeta
 
 from irods_helper import get_all_avus, set_singular_avu, get_irods_connection
 from ldap_helper import get_ldap_connection, for_ldap_entries_do, read_ldap_attribute
@@ -44,8 +44,8 @@ LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']
 
 LDAP_SERVICE_PREFIX = "datahubmaastricht:"
 LDAP_USERS_SEARCH_FILTER = "(objectClass=person)"
-LDAP_GROUPS_SEARCH_FILTER = "(objectClass=posixGroup)"
-LDAP_GROUP_MEMBER_ATTR = 'sczMember'
+LDAP_GROUPS_SEARCH_FILTER = "(objectClass=groupOfNames)"
+LDAP_GROUP_MEMBER_ATTR = 'member'
 
 LDAP_COS_BASE_DN = os.environ['LDAP_COS_BASE_DN']
 LDAP_COS_SEARCH_FILTER = "(objectClass=organization)"
@@ -63,8 +63,6 @@ IRODS_ZONE = "nlmumc"
 # irods groups and users with this AVU should not be synchronized (i.e. service-accounts, DH-ingest, ...)
 LDAP_SYNC_AVU = 'ldapSync'
 
-# irods users who are not yet in SRAM should not be deleted
-# To DO: but they could be synched! And the flag could be removed during the syncing, see UserAVU
 
 ##########################################################
 
@@ -72,7 +70,6 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("commit", default=False, action='store_true', help="write any updates/changes to iRODS")
     parser.add_argument("scheduled", default=False, action='store_true', help="if set runs every few minutes")
-    parser.add_argument("printLdapInfo", default=False, action='store_true', help="print the internal model before writing to iRODS")
 
     return parser.parse_args()
 
@@ -91,8 +88,11 @@ def create_new_irods_user_password():
 
 class UserAVU(Enum):
     DISPLAY_NAME = 'displayName'
-    EMAIL = "email"
+    EMAIL = 'email'
     PENDING_INVITE = 'pendingSramInvite'
+    EXTERNAL_ID = 'voPersonExternalID'
+    EXTERNAL_AFFILIATION = 'voPersonExternalAffiliation'
+    UNIQUE_ID = 'eduPersonUniqueID'
 
 
 class GroupAVU(Enum):
@@ -103,26 +103,70 @@ class GroupAVU(Enum):
 ##########################################################
 
 class LdapUser:
-    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName']  # all=*
+    LDAP_ATTRIBUTES = ['uid', 'mail', 'cn', 'displayName', 'voPersonExternalID', 'voPersonExternalAffiliation',
+                       'eduPersonUniqueId']
 
-    def __init__(self, uid, cn, email, display_name):
+    def __init__(self, uid, unique_id, cn, email, display_name, external_id, external_affiliation):
         self.uid = uid
+        self.unique_id = unique_id
         self.display_name = display_name
         self.email = email
+        self.external_id = external_id
+        self.external_affiliation = external_affiliation
         self.irods_user = None
 
     def __repr__(self):
-        return "User( uid:{}, displayName: {}, email: {}, iRodsUser: {})".format(self.uid, self.display_name,
-                                                                                 self.email, self.irods_user)
+        return "User( uid:{}, eduPersonUniqueID: {}, displayName: {}, email: {}, voPersonExternalID: {}, voPersonExternalAffiliation: {}, iRodsUser: {})".format(
+            self.uid, self.unique_id, self.display_name, self.email, self.external_id, self.external_affiliation,
+            self.irods_user)
+
+    @classmethod
+    def is_uid_unique_id_combination_valid(cls, irods_session, uid, unique_id, update, existing_avus):
+        if not uid:
+            logger.error("User without uid is invalid! The eduPersonUniqueId: {}".format(unique_id))
+            return False
+        if not unique_id:
+            logger.error("User without eduPersonUniqueId is invalid! The uid: {}".format(uid))
+            return False
+
+        if not update:
+            # check if uniqueId is used by another user
+            # iquest "select META_DATA_ATTR_VALUE, META_DATA_ATTR_NAME WHERE META_DATA_ATTR_NAME = 'voPersonUniqueId' and META_DATA_ATTR_VALUE = '{}'".format( uniqueId )
+            query = irods_session.query(User).filter(UserMeta.name == UserAVU.UNIQUE_ID.value,
+                                                     UserMeta.value == unique_id)
+            if 0 == len(list(query)):
+                return True
+            else:
+                logger.error(
+                    "User with uid {} and eduPersonUniqeId {} cant be inserted, since eduPersonUniqueId is already used!".format(
+                        uid, unique_id))
+                return False
+
+        if update and existing_avus:
+            existing_unique_id = existing_avus[UserAVU.UNIQUE_ID.value]
+            if existing_unique_id == unique_id:
+                return True
+            else:
+                logger.error(
+                    "User with uid {} and eduPersonUniqeId {} cant be updated with new eduPersonUniqueId {}!".format(
+                        uid, existing_unique_id, unique_id))
+                return False
+        else:
+            logger.error(
+                "Unexpected state for uid: {}, uniqueId: {}, update: {}, existing_avus: {}".format(uid, unique_id, update,
+                                                                                               existing_avus))
+            return False
 
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
         uid = read_ldap_attribute(ldap_entry, 'uid')
+        unique_id = read_ldap_attribute(ldap_entry, 'eduPersonUniqueId')
         mail = read_ldap_attribute(ldap_entry, 'mail')
         cn = read_ldap_attribute(ldap_entry, 'cn')
         display_name = read_ldap_attribute(ldap_entry, 'displayName')
-        # TO DO: here we could decided whether to use the cn or uid as displayName...
-        return LdapUser(uid, cn, mail, display_name)
+        external_id = read_ldap_attribute(ldap_entry, 'voPersonExternalID')
+        external_affiliation = read_ldap_attribute(ldap_entry, 'voPersonExternalAffiliation')
+        return LdapUser(uid, unique_id, cn, mail, display_name, external_id, external_affiliation)
 
     # simply write the model user to irods,
     # set password and AVUs for existing attributes
@@ -130,19 +174,33 @@ class LdapUser:
         if dry_run:
             return
         logger.info("* Create a new irods user: %s" % self.uid)
+
+        if not LdapUser.is_uid_unique_id_combination_valid(irods_session, self.uid, self.unique_id, update=False,
+                                                           existing_avus=None):
+            raise Exception("For user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
+
         new_irods_user = irods_session.users.create(self.uid, 'rodsuser')
+        new_irods_user.metadata.add(UserAVU.UNIQUE_ID.value, self.unique_id)
+        logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.UNIQUE_ID.value, self.unique_id))
         if self.email:
             new_irods_user.metadata.add(UserAVU.EMAIL.value, self.email)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EMAIL.value, self.email))
         if self.display_name:
             new_irods_user.metadata.add(UserAVU.DISPLAY_NAME.value, self.display_name)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
+        if self.external_id:
+            new_irods_user.metadata.add(UserAVU.EXTERNAL_ID.value, self.external_id)
+            logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
+        if self.external_affiliation:
+            new_irods_user.metadata.add(UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation)
+            logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value,
+                                                             self.external_affiliation))
         password = create_new_irods_user_password()
         irods_session.users.modify(self.uid, 'password', password)
         self.irods_user = new_irods_user
 
-        # TO DO: is this the correct place? Any other must have groups that I'm missing?
         # Add the user to the group DH-ingest (= ensures that user is able to create and ingest dropzones)
+        # TODO: Make this better configurable
         add_user_to_group(irods_session, "DH-ingest", self.uid)
 
         return self.irods_user
@@ -155,6 +213,10 @@ class LdapUser:
             # read current AVUs and change if needed
             existing_avus = get_all_avus(self.irods_user)
             logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
+            if not LdapUser.is_uid_unique_id_combination_valid(irods_session, self.uid, self.unique_id, update=True,
+                                                               existing_avus=existing_avus):
+                raise Exception("-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
+
             # careful: because the list of existing AVUs is not updated changing a key multiple times will lead to
             # strange behavior!
             if set_singular_avu(self.irods_user, UserAVU.EMAIL.value, self.email):
@@ -162,6 +224,12 @@ class LdapUser:
             if set_singular_avu(self.irods_user, UserAVU.DISPLAY_NAME.value, self.display_name):
                 logger.info(
                     "-- user {} updated AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
+            if set_singular_avu(self.irods_user, UserAVU.EXTERNAL_ID.value, self.external_id):
+                logger.info(
+                    "-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_ID.value, self.external_id))
+            if set_singular_avu(self.irods_user, UserAVU.EXTERNAL_AFFILIATION.value, self.external_affiliation):
+                logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.EXTERNAL_AFFILIATION.value,
+                                                                   self.external_affiliation))
             if set_singular_avu(self.irods_user, UserAVU.PENDING_INVITE.value, None):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.PENDING_INVITE.value, None))
         except iRODSException as error:
@@ -220,7 +288,7 @@ class LdapGroup:
         return "Group( group_name:{}, member_uids: {},  irods_group: {}, display_name: {})".format(self.group_name,
                                                                                                    self.member_uids,
                                                                                                    self.irods_group,
-                                                                                                   self.displayName)
+                                                                                                   self.display_name)
 
     @classmethod
     # b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl'
@@ -236,17 +304,27 @@ class LdapGroup:
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
         group_name = read_ldap_attribute(ldap_entry, 'cn')
+
+        # Focus on CO groups only.
+        # If we need to sync other groups as well, we need to adjust for the ':' character,
+        # since iRODS will fail on groupnames with that character!
+
+        if len(group_name.split(':')) > 1:
+            return None
+
         # get us an array of all member-attributes, which contains
         # DNs: [ b'cn=empty-membership-placeholder',  b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl', ...]
         group_member_dns = ldap_entry.get(LDAP_GROUP_MEMBER_ATTR, [b""])
         group_member_uids = list(
             filter(lambda x: x is not None, map(LdapGroup.get_group_member_uids, group_member_dns)))
+
         return LdapGroup(group_name, group_member_uids)
 
     # ---
     def create_new_group(self, irods_session, dry_run):
         if dry_run:
             return
+        logger.info("Creating group: {}".format(self.group_name))
         new_group = irods_session.user_groups.create(self.group_name)
         if self.display_name:
             new_group.metadata.add(GroupAVU.DISPLAY_NAME.value, self.display_name)
@@ -262,7 +340,7 @@ class LdapGroup:
     # ---
     def update_existing_group(self, irods_session, dry_run):
         if dry_run:
-            return self.irods_user
+            return self.irods_group
         logger.debug("-- changing existing irods group: {}".format(self.group_name))
         try:
             # read current AVUs and change if needed
@@ -344,7 +422,7 @@ def syncable_irods_users(sess):
             logger.error("found unexpected number of AVUs for key ldapSync and user: {} {}".format(irodsUser.name,
                                                                                                    len(syncAVUs)))
 
-    logger.debug("iRods users found: {} (allowed for synchronization: {})".format(n, len(irods_user_names_set)))
+    logger.debug("iRODS users found: {} (allowed for synchronization: {})".format(n, len(irods_user_names_set)))
     return irods_user_names_set
 
 
@@ -355,9 +433,10 @@ def get_users_from_ldap(l):
     ldap_users = for_ldap_entries_do(l, LDAP_USERS_BASE_DN, LDAP_USERS_SEARCH_FILTER,
                                      LdapUser.LDAP_ATTRIBUTES,
                                      LdapUser.create_for_ldap_entry)
-    if settings.printLdapInfo:
-        for user in ldap_users:
-            logger.info(user)
+
+    for user in ldap_users:
+        logger.debug(user)
+
     return ldap_users
 
 
@@ -389,7 +468,7 @@ def remove_obsolete_irods_users(sess, ldap_users, irods_users):
 ##########################################################
 
 def sync_ldap_users_to_irods(ldap, irods, dry_run):
-    logger.info("Syncing users to iRods:")
+    logger.info("Syncing users to iRODS:")
 
     ldap_users = get_users_from_ldap(ldap)
     logger.info("* LDAP users found: %d" % len(ldap_users))
@@ -401,7 +480,7 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
         remove_obsolete_irods_users(irods, ldap_users, irods_users)
 
     # Loop over ldap users and create or update as necessary
-    logger.debug("* Syncing {} found LDAP entries to iRods:".format(len(ldap_users)))
+    logger.debug("* Syncing {} found LDAP entries to iRODS:".format(len(ldap_users)))
     n = 0
     for user in ldap_users:
         n = n + 1
@@ -464,9 +543,12 @@ def get_ldap_groups(l, group_key_2_co):
                                       LdapGroup.create_for_ldap_entry)
 
     for group in ldap_groups:
-        # dangerous: by
+        # dangerous: string parsing!
+        logger.debug("LDAP Group: {}".format(group.group_name))
         co_key = group.group_name.split(":")[0]
-        group_name_2_groups[group.group_name] = group
+        # Test this change!
+        # group_name_2_groups[group.group_name] = group
+        group_name_2_groups[co_key] = group
 
     return group_name_2_groups
 
@@ -489,7 +571,6 @@ def remove_user_from_group(sess, group_name, user_name):
     try:
         irods_group.removemember(user_name)
         logger.info("-- User: " + user_name + " removed from group " + group_name)
-    # TO DO: This should not catch all exceptions!
     except (PycommandsException, iRODSException) as e:
         logger.error("-- could not remove user {} from group {}. '{}'".format(user_name, group_name, e))
 
@@ -518,7 +599,7 @@ def get_syncable_irods_groups(sess):
             logger.error("found unexpected number of AVUs for key ldapSync and group: {} {}".format(irodsGroup.name,
                                                                                                     len(syncAVUs)))
 
-    logger.debug("iRods groups found: {} (allowed for synchronization: {})".format(n, len(irods_group_names_set)))
+    logger.debug("iRODS groups found: {} (allowed for synchronization: {})".format(n, len(irods_group_names_set)))
     return irods_group_names_set
 
 
@@ -528,9 +609,9 @@ def sync_ldap_groups_to_irods(ldap, irods, dry_run):
     logger.info("Syncing groups to irods:")
 
     group_key_2_co = get_ldap_cos(ldap)
-    logger.debug("* LDAP cos found: {}".format(len(group_key_2_co)))
+    logger.info("* LDAP cos found: {}".format(len(group_key_2_co)))
     group_name_2_group = get_ldap_groups(ldap, group_key_2_co)
-    logger.debug("* LDAP groups found: {}".format(len(group_name_2_group)))
+    logger.info("* LDAP groups found: {}".format(len(group_name_2_group)))
 
     syncable_irods_groups = get_syncable_irods_groups(irods)
 
@@ -643,6 +724,8 @@ def sigterm_handler(_signal, _stack_frame):
     sys.exit(0)
 
 
+SLEEP_INTERVAL_MINUTES = 5
+
 if __name__ == "__main__":
     # Handle the SIGTERM signal from Docker
     signal.signal(signal.SIGTERM, sigterm_handler)
@@ -652,7 +735,9 @@ if __name__ == "__main__":
         exit_code = main(not settings.commit)
         if settings.scheduled:
             while True:
-                time.sleep(5 * 60)
+                seconds = int(SLEEP_INTERVAL_MINUTES * 60)
+                logger.info("Sleeping for {} seconds".format(seconds))
+                time.sleep(seconds)
                 main(not settings.commit)
         sys.exit(exit_code)
     finally:
