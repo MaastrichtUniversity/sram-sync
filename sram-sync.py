@@ -68,8 +68,8 @@ LDAP_SYNC_AVU = 'ldapSync'
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument("commit", default=False, action='store_true', help="write any updates/changes to iRODS")
-    parser.add_argument("scheduled", default=False, action='store_true', help="if set runs every few minutes")
+    parser.add_argument("--commit", default=False, action='store_true', help="write any updates/changes to iRODS")
+    parser.add_argument("--scheduled", default=False, action='store_true', help="if set runs every few minutes")
 
     return parser.parse_args()
 
@@ -731,6 +731,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, sigterm_handler)
     settings = parse_arguments()
 
+    print(settings)
     try:
         exit_code = main(not settings.commit)
         if settings.scheduled:
