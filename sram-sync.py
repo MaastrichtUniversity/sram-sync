@@ -45,6 +45,7 @@ LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']
 LDAP_USERS_SEARCH_FILTER = "(objectClass=person)"
 LDAP_GROUPS_SEARCH_FILTER = "(objectClass=sczGroup)" #will become: groupOfNames
 LDAP_GROUP_MEMBER_ATTR = 'sczMember' #will become: member
+LDAP_GROUP_UNIQUE_ID = 'gidNumber' #will become documentIndentifier ?
 
 LDAP_COS_BASE_DN = os.environ['LDAP_COS_BASE_DN']
 LDAP_COS_SEARCH_FILTER = "(objectClass=organization)"
@@ -96,7 +97,8 @@ class UserAVU(Enum):
 
 class GroupAVU(Enum):
     DISPLAY_NAME = 'displayName'
-    DESCRIPTION = "description"
+    DESCRIPTION = 'description'
+    DOCUMENT_ID = 'documentIdentifier'
 
 
 ##########################################################
@@ -276,18 +278,20 @@ class LdapGroup:
     LDAP_ATTRIBUTES = ['*']  # all=*
     AVU_KEYS = []
 
-    def __init__(self, group_name, member_uids=[]):
+    def __init__(self, group_name, document_id, member_uids=[]):
         self.group_name = group_name
+        self.document_id = document_id
         self.member_uids = member_uids
         self.irods_group = None
         self.display_name = None
         self.description = None
 
     def __repr__(self):
-        return "Group( group_name:{}, member_uids: {},  irods_group: {}, display_name: {})".format(self.group_name,
-                                                                                                   self.member_uids,
-                                                                                                   self.irods_group,
-                                                                                                   self.display_name)
+        return "Group( group_name:{}, member_uids: {},  irods_group: {}, display_name: {}, document_id: {})".format(self.group_name,
+                                                                                                                    self.member_uids,
+                                                                                                                    self.irods_group,
+                                                                                                                    self.display_name,
+                                                                                                                    self.document_id)
 
     @classmethod
     # b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl'
@@ -310,14 +314,14 @@ class LdapGroup:
 
         if len(group_name.split(':')) > 1:
             return None
-
+        document_id = read_ldap_attribute(ldap_entry, LDAP_GROUP_UNIQUE_ID)
         # get us an array of all member-attributes, which contains
         # DNs: [ b'cn=empty-membership-placeholder',  b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl', ...]
         group_member_dns = ldap_entry.get(LDAP_GROUP_MEMBER_ATTR, [b""])
         group_member_uids = list(
             filter(lambda x: x is not None, map(LdapGroup.get_group_member_uids, group_member_dns)))
 
-        return LdapGroup(group_name, group_member_uids)
+        return LdapGroup(group_name, document_id, group_member_uids)
 
     # ---
     def create_new_group(self, irods_session, dry_run):
@@ -325,6 +329,7 @@ class LdapGroup:
             return
         logger.info("Creating group: {}".format(self.group_name))
         new_group = irods_session.user_groups.create(self.group_name)
+        new_group.metadata.add(GroupAVU.DOCUMENT_ID.value, self.document_id)
         if self.display_name:
             new_group.metadata.add(GroupAVU.DISPLAY_NAME.value, self.display_name)
             logger.info(
@@ -337,6 +342,39 @@ class LdapGroup:
         return self.irods_group
 
     # ---
+    @classmethod
+    def get_group_by_document_id(cls, irods_session, group_name, document_id ):
+        if not document_id:
+            str = "Group without documentId is invalid! The groupName: {}".format( group_name )
+            logger.error( str )
+            raise Exception( str )
+
+        #check if the provided documentId is used for any group, if the group name doesn't match raise an error
+        query = irods_session.query( User ).filter( UserMeta.name == GroupAVU.DOCUMENT_ID.value,
+                                                    UserMeta.value == document_id)
+        number_of_groups = len(list(query))
+        if 0 == number_of_groups:
+            #the document id was never used, so its safe to create/update the group
+            logger.info( "TESTEST: the document id was never used, so its safe to create/update the group" )
+            return group_name
+        elif number_of_groups > 1:
+            #this should not have happened, why is the documentId not unique? Bailing out!
+            str = "DocumentId is not unique! The documentId: {}".format( document_id )
+            logger.error( str )
+            raise Exception( str )
+        elif 1 == number_of_groups:
+            #there is exactly one documentId in use, check if its
+            foundResult = list(query)[0]
+            foundGroupName = foundResult[ User.name ]
+            if group_name == foundGroupName:
+               logger.info( "TESTEST: the document id was used for the same group!" )
+               return group_name;
+            else:
+               logger.warn( "GroupTracking: The document id {} referring to irods group {} is now referring to group name: {}. Possible renaming?".format( document_id, group_name, foundGroupName) )
+               return foundGroupName;
+        raise Exception( "This line should be unreachable!" )
+
+    # ---
     def update_existing_group(self, irods_session, dry_run):
         if dry_run:
             return self.irods_group
@@ -344,7 +382,12 @@ class LdapGroup:
         try:
             # read current AVUs and change if needed
             existing_avus = get_all_avus(self.irods_group)
-            logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
+            logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))   
+            
+            #if not LdapUser.is_document_id_for_group_valid( irods_session, self.group_name, self.document_id, update=True, existing_avus=existing_avus):
+            #    raise Exception("-- for user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
+
+
             # careful: because the list of existing AVUs is not updated changing a key multiple times will lead to
             # strange behavior!     
             if set_singular_avu(self.irods_group, GroupAVU.DESCRIPTION.value, self.description):
@@ -363,8 +406,11 @@ class LdapGroup:
     def sync_to_irods(self, irods_session, dry_run, created, updated, failed):
         # Check if the group exists
         exists_group = True
+        irods_group_name = None
         try:
-            self.irods_group = irods_session.user_groups.get(self.group_name)
+            #check if a group with the given name (short-name) and document_id exists!
+            irods_group_name = LdapGroup.get_group_by_document_id( irods_session, self.group_name, self.document_id )
+            self.irods_group = irods_session.user_groups.get( irods_group_name )
         except UserGroupDoesNotExist:
             exists_group = False
 
@@ -381,7 +427,7 @@ class LdapGroup:
         else:
             try:
                 self.irods_group = self.update_existing_group(irods_session, dry_run)
-                logger.debug("-- Group: " + self.group_name + " updated")
+                logger.debug("-- Group: {} / {} updated".format( irods_group_name, self.group_name) )
                 if updated:
                     updated()
             except (PycommandsException, iRODSException) as e:
