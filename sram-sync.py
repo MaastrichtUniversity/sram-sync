@@ -42,15 +42,14 @@ LDAP_HOST = os.environ['LDAP_HOST']
 LDAP_USERS_BASE_DN = os.environ['LDAP_USERS_BASE_DN']
 LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']
 
-LDAP_SERVICE_PREFIX = "datahubmaastricht:"
 LDAP_USERS_SEARCH_FILTER = "(objectClass=person)"
-LDAP_GROUPS_SEARCH_FILTER = "(objectClass=groupOfNames)"
-LDAP_GROUP_MEMBER_ATTR = 'member'
+LDAP_GROUPS_SEARCH_FILTER = "(objectClass=sczGroup)" #will become: groupOfNames
+LDAP_GROUP_MEMBER_ATTR = 'sczMember' #will become: member
 
 LDAP_COS_BASE_DN = os.environ['LDAP_COS_BASE_DN']
 LDAP_COS_SEARCH_FILTER = "(objectClass=organization)"
 LDAP_COS_ATTRIBUTES = ["o", "description", "displayName"]
-LDAP_COS_SCOPE = ldap.SCOPE_SUBTREE  # SCOPE_BASE, SCOPE_SUBTREE, SCOPE_ONELEVEL
+LDAP_COS_SCOPE = ldap.SCOPE_ONELEVEL  # SCOPE_BASE, SCOPE_SUBTREE, SCOPE_ONELEVEL
 
 # iRODS config
 IRODS_HOST = os.environ['IRODS_HOST']
@@ -68,8 +67,8 @@ LDAP_SYNC_AVU = 'ldapSync'
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument("commit", default=False, action='store_true', help="write any updates/changes to iRODS")
-    parser.add_argument("scheduled", default=False, action='store_true', help="if set runs every few minutes")
+    parser.add_argument("--commit", default=False, action='store_true', help="write any updates/changes to iRODS")
+    parser.add_argument("--scheduled", default=False, action='store_true', help="if set runs every few minutes")
 
     return parser.parse_args()
 
@@ -731,6 +730,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, sigterm_handler)
     settings = parse_arguments()
 
+    print(settings)
     try:
         exit_code = main(not settings.commit)
         if settings.scheduled:
