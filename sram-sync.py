@@ -440,28 +440,37 @@ def get_users_from_ldap(l):
 
 
 ##########################################################
-def remove_obsolete_irods_users(sess, ldap_users, irods_users):
+def remove_obsolete_irods_users(sess, ldap_users, irods_users, dry_run):
     logger.info("* Deleting obsolete irods users...")
     deletion_candidates = irods_users.copy()
     for ldap_user in ldap_users:
         deletion_candidates.discard(ldap_user.uid)
 
-    number_deletions = len(deletion_candidates)
-    logger.info("-- identified %d obsolete irods users for deletion" % number_deletions)
+    number_pending_invites = 0
+    for uid in deletion_candidates:
+       user = sess.users.get(uid)
+       avus = get_all_avus(user)
+       if UserAVU.PENDING_INVITE.value in avus:
+          logger.info("-- won't delete user {} since its marked as invitation pending.".format(uid))
+          deletion_candidates.discard( uid )
+          number_pending_invites = number_pending_invites + 1
+       else 
+          logger.info( "-- will delete user {}".format( uid ) )
+
+    logger.info( "-- found obsolete users for deletion {} and users with pending invites {}.".format( len(deletion_candidates), number_pending_invites ) )
 
     # Safety pal: the script must not delete if amount of users to be deleted is higher than the threshold
-    if number_deletions >= DELETE_USERS_LIMIT:
+    if len(deletion_candidates) >= DELETE_USERS_LIMIT:
         logger.error("-- The limit of deletions (%d) in one synchronization have been reached. "
                      "Deletions aborted" % number_deletions)
     else:
-        for uid in deletion_candidates:
-            user = sess.users.get(uid)
-            avus = get_all_avus(user)
-            if UserAVU.PENDING_INVITE.value in avus:
-                logger.info("-- won't delete user {} since its marked as invitation pending.".format(uid))
-            else:
-                logger.info("-- deleting user: {}".format(uid))
-                user.remove()
+        if dry_run:
+           logger.info("-- deletion of users not permitted. wont delete any user" )
+        else:
+           for uid in deletion_candidates:
+               logger.info("-- deleting user: {}".format(uid))
+               user = sess.users.get(uid)
+               user.remove()
 
 
 ##########################################################
@@ -475,8 +484,8 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
     irods_users = syncable_irods_users(irods)
 
     # remove obsolete users from irods
-    if not dry_run and DELETE_USERS:
-        remove_obsolete_irods_users(irods, ldap_users, irods_users)
+    if DELETE_USERS:
+        remove_obsolete_irods_users(irods, ldap_users, irods_users, dry_run)
 
     # Loop over ldap users and create or update as necessary
     logger.debug("* Syncing {} found LDAP entries to iRODS:".format(len(ldap_users)))
