@@ -43,8 +43,8 @@ LDAP_USERS_BASE_DN = os.environ['LDAP_USERS_BASE_DN']
 LDAP_GROUPS_BASE_DN = os.environ['LDAP_GROUPS_BASE_DN']
 
 LDAP_USERS_SEARCH_FILTER = "(objectClass=person)"
-LDAP_GROUPS_SEARCH_FILTER = "(objectClass=sczGroup)" #will become: groupOfNames
-LDAP_GROUP_MEMBER_ATTR = 'sczMember' #will become: member
+LDAP_GROUPS_SEARCH_FILTER = "(objectClass=groupOfMembers)" #formerly: sczGroup
+LDAP_GROUP_MEMBER_ATTR = 'member' #formerly: sczMember
 
 LDAP_COS_BASE_DN = os.environ['LDAP_COS_BASE_DN']
 LDAP_COS_SEARCH_FILTER = "(objectClass=organization)"
@@ -96,7 +96,8 @@ class UserAVU(Enum):
 
 class GroupAVU(Enum):
     DISPLAY_NAME = 'displayName'
-    DESCRIPTION = "description"
+    DESCRIPTION = 'description'
+    UNIQUE_ID = 'uniqueId'
 
 
 ##########################################################
@@ -276,7 +277,10 @@ class LdapGroup:
     LDAP_ATTRIBUTES = ['*']  # all=*
     AVU_KEYS = []
 
-    def __init__(self, group_name, member_uids=[]):
+    def __init__(self, unique_id, cn, co_key, group_name, member_uids=[]):
+        self.unique_id = unique_id
+        self.cn = cn
+        self.co_key = co_key
         self.group_name = group_name
         self.member_uids = member_uids
         self.irods_group = None
@@ -284,10 +288,12 @@ class LdapGroup:
         self.description = None
 
     def __repr__(self):
-        return "Group( group_name:{}, member_uids: {},  irods_group: {}, display_name: {})".format(self.group_name,
-                                                                                                   self.member_uids,
-                                                                                                   self.irods_group,
-                                                                                                   self.display_name)
+        return "Group( unique_id: {}, cn: {}, group_name: {}, member_uids: {},  irods_group: {}, display_name: {})".format( self.unique_id,
+                                                                                                                            self.cn,
+                                                                                                                            self.group_name,
+                                                                                                                            self.member_uids,
+                                                                                                                            self.irods_group,
+                                                                                                                            self.display_name)
 
     @classmethod
     # b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl'
@@ -302,14 +308,15 @@ class LdapGroup:
     # ---
     @classmethod
     def create_for_ldap_entry(cls, ldap_entry):
-        group_name = read_ldap_attribute(ldap_entry, 'cn')
-
+        cn = read_ldap_attribute(ldap_entry, 'cn')
+        unique_id = read_ldap_attribute(ldap_entry, 'uniqueIdentifier')
         # Focus on CO groups only.
         # If we need to sync other groups as well, we need to adjust for the ':' character,
         # since iRODS will fail on groupnames with that character!
 
-        if len(group_name.split(':')) > 1:
-            return None
+        cn_parts = cn.split('.')
+        co_key = ".".join( cn_parts[0:2] )
+        group_name = cn_parts[1]
 
         # get us an array of all member-attributes, which contains
         # DNs: [ b'cn=empty-membership-placeholder',  b'uid=p.vanschayck@maastrichtuniversity.nl,ou=users,dc=datahubmaastricht,dc=nl', ...]
@@ -317,7 +324,7 @@ class LdapGroup:
         group_member_uids = list(
             filter(lambda x: x is not None, map(LdapGroup.get_group_member_uids, group_member_dns)))
 
-        return LdapGroup(group_name, group_member_uids)
+        return LdapGroup(unique_id, cn, co_key, group_name, group_member_uids)
 
     # ---
     def create_new_group(self, irods_session, dry_run):
@@ -514,8 +521,8 @@ def remove_obsolete_irods_groups(sess, ldap_group_names, irods_group_names):
 
 def get_ldap_co(ldap_entry):
     o = read_ldap_attribute(ldap_entry, 'o')
-    if ':' in o:
-        key = o.split(":")[1]
+    if '.' in o:
+        key = o #o.split(".")[1]
         displayName = read_ldap_attribute(ldap_entry, 'displayName')
         description = read_ldap_attribute(ldap_entry, 'description')
         return {"key": key, "o": o, "description": description, "display_name": displayName}
@@ -535,21 +542,25 @@ def get_ldap_cos(l):
 
 ##########################################################
 # get all groups from LDAP
-def get_ldap_groups(l, group_key_2_co):
-    # get the groups
-    group_name_2_groups = dict()
+def get_ldap_co_groups(l):
+    # The association between group names and cos could be:
+    # mumc.vitrojet.@all      -> mumc.vitrojet  --> this is the one we need!
+    # mumc.vitrojet.subgroup1 -> mumc.vitrojet
+    # mumc.vitrojet.subgroup2 -> mumc.vitrojet
+
+    #get all groups
+    co_key_2_groups = dict()
     ldap_groups = for_ldap_entries_do(l, LDAP_GROUPS_BASE_DN, LDAP_GROUPS_SEARCH_FILTER, ["*"],
                                       LdapGroup.create_for_ldap_entry)
 
     for group in ldap_groups:
-        # dangerous: string parsing!
-        logger.debug("LDAP Group: {}".format(group.group_name))
-        co_key = group.group_name.split(":")[0]
-        # Test this change!
-        # group_name_2_groups[group.group_name] = group
-        group_name_2_groups[co_key] = group
-
-    return group_name_2_groups
+        logger.debug("LDAP Group: {}".format(group))
+        if group.cn.split( '.' )[ -1 ] == "@all":
+          co_key_2_groups[ group.co_key ] = group
+        else:
+          logger.debug("LDAP Group: {} is omitted since it's not an all-users container!".format(group.group_name))
+          continue
+    return co_key_2_groups
 
 
 ##########################################################
@@ -606,32 +617,38 @@ def get_syncable_irods_groups(sess):
 
 def sync_ldap_groups_to_irods(ldap, irods, dry_run):
     logger.info("Syncing groups to irods:")
+    #first: read all COs from LDAP 'ordered' structure, to later enhace the groups with co-information
+    co_key_2_co = get_ldap_cos(ldap)
+    logger.info("* LDAP cos found: {}".format(len(co_key_2_co)))
+    #second: read all groups from LDAP 'flat' structure
+    co_key_2_group = get_ldap_co_groups(ldap)
+    logger.info("* LDAP co-groups found: {}".format(len(co_key_2_group)))
 
-    group_key_2_co = get_ldap_cos(ldap)
-    logger.info("* LDAP cos found: {}".format(len(group_key_2_co)))
-    group_name_2_group = get_ldap_groups(ldap, group_key_2_co)
-    logger.info("* LDAP groups found: {}".format(len(group_name_2_group)))
-
+    #third: get all existing irods groups
     syncable_irods_groups = get_syncable_irods_groups(irods)
 
+    #fourth: delete all irods groups that are no longer in ldap (additional restrictions apply)
+    group_names = map( lambda group: group.group_name, co_key_2_group.values() )
     if not dry_run and DELETE_GROUPS:
-        remove_obsolete_irods_groups(irods, group_name_2_group.keys(), syncable_irods_groups)
+        remove_obsolete_irods_groups(irods, group_names, syncable_irods_groups)
 
+    #finally: merge infomration from COs and groups, and synchronize to irods
     n = 0
-    for (group_name, group) in group_name_2_group.items():
+    for (co_key, group) in co_key_2_group.items():
         n = n + 1
-        logger.debug("-- syncing LDAP group {}/{}: {}".format(n, len(group_name_2_group), group_name))
+        logger.debug("-- syncing LDAP group {}/{}: {}".format(n, len(co_key_2_group), co_key))
         # enhance groups with co information
-        if group_name in group_key_2_co:
-            co = group_key_2_co[group_name]
+        if co_key in co_key_2_co:
+            co = co_key_2_co[co_key]
             group.display_name = co['display_name']
             group.description = co['description']
+        # and write to irods
         if not dry_run:
             group.sync_to_irods(irods, dry_run, None, None, None)
         else:
             logger.info("-- syncing of groups not permitted. Group {} will no be changed/created".format(group_name))
 
-    return group_name_2_group
+    return co_key_2_group
 
 
 ##########################################################
@@ -660,8 +677,8 @@ def sync_group_memberships(irods, ldap_groups, dry_run):
     # irods_groups_query = irods.query(UserGroup).filter(User.type == 'rodsgroup')
     syncable_irods_groups = get_syncable_irods_groups(irods)
 
+    #populate the dict irods_groups_2_users with irods group name to set of irods user names
     for groupName in syncable_irods_groups:
-        # userGroup = iRODSUserGroup( irods.user_groups, group )
         userGroup = irods.user_groups.get(groupName)
         member_names = set(user.name for user in userGroup.members)
         logger.debug("-- irods-group: {}, members: {}".format(groupName, member_names))
@@ -669,15 +686,15 @@ def sync_group_memberships(irods, ldap_groups, dry_run):
 
     # check each LDAP Group against each irodsGroup
     n = 0
-    for (group_name, group) in ldap_groups.items():
-        if userGroup.name not in syncable_irods_groups:
+    for (co_key, group) in ldap_groups.items():
+        group_name = group.group_name
+        if group_name not in syncable_irods_groups:
             continue
         n = n + 1
         logger.info("* Syncing memberships for group {}...".format(group_name))
         irods_member_list = irods_groups_2_users.get(group_name, set())
         stay, add, remove = diff_member_lists(group.member_uids, irods_member_list)
-        logger.info("-- memberships for group {}: {} same, {} added, {} removed".format(group_name, len(stay), len(add),
-                                                                                        len(remove)))
+        logger.info("-- memberships for group {}: {} same, {} added, {} removed".format(group_name, len(stay), len(add), len(remove)))
 
         if not dry_run:
             for uid in add:
@@ -699,7 +716,6 @@ def main(dry_run):
 
     ldap = get_ldap_connection(LDAP_HOST, LDAP_USER, LDAP_PASS)
     irods = get_irods_connection(IRODS_HOST, IRODS_PORT, IRODS_USER, IRODS_PASS, IRODS_ZONE)
-
     ldap_groups = None
     if SYNC_USERS:
         sync_ldap_users_to_irods(ldap, irods, dry_run)
@@ -729,7 +745,7 @@ if __name__ == "__main__":
     # Handle the SIGTERM signal from Docker
     signal.signal(signal.SIGTERM, sigterm_handler)
     settings = parse_arguments()
-
+    logger.debug( "DEBUG ON" )
     print(settings)
     try:
         exit_code = main(not settings.commit)
