@@ -359,10 +359,8 @@ class LdapGroup:
         query = irods_session.query( User ).filter( UserMeta.name == GroupAVU.UNIQUE_ID.value,
                                                     UserMeta.value == unique_id )
         number_of_groups = len(list(query))
-        logger.info( "TESTTEST: group_name: {}, unique_id: {}, found matching groups in irods: {}".format( group_name, unique_id, number_of_groups) )
         if 0 == number_of_groups:
             #the uniqueid was never used, so its safe to create/update the group
-            logger.info( "TESTEST: the uniqueId was never used, so its safe to create/update the group" )
             return group_name
         elif number_of_groups > 1:
             #this should not have happened, why is the uniqueId not unique? Bailing out!
@@ -374,7 +372,6 @@ class LdapGroup:
             foundResult = list(query)[0]
             foundGroupName = foundResult[ User.name ]
             if group_name == foundGroupName:
-               logger.info( "TESTEST: the uniqueId was used for the same group!" )
                return group_name;
             else:
                str = "GroupTracking: The uniqueId '{}' for irods group '{}' was already used for group: '{}'. This should never happen. Please check with SRAM what is going on.".format( unique_id, group_name, foundGroupName)
@@ -400,9 +397,6 @@ class LdapGroup:
                  str = "GroupTracking: The uniqueId '{}' for irods group '{}' differs from the uniqueId in LDAP: '{}'. This should never happen. Please check with SRAM what is going on.".format( existing_avus[ GroupAVU.UNIQUE_ID.value ], self.group_name, self.unique_id )
                  logger.error( str )
                  raise Exception( str )
-              else:
-                 #apparently the unique id hasnt changed, so thats good
-                 logger.info( "TESTEST: uniqueId is still the same" )
             else:
                 #apparently there is no uniqueId on the existing grouo! This should usually not happen!
                 logger.warn( "-- The group: {} doesnt have a uniqueId-AVU, will add uniqueId: {}".format( self.group_name, self.unique_id ) )
@@ -699,7 +693,6 @@ def sync_ldap_groups_to_irods(ldap, irods, dry_run):
 
     #fourth: delete all irods groups that are no longer in ldap (additional restrictions apply)
     group_names = list(map( lambda group: group.group_name, co_key_2_group.values() ) )
-    logger.info( "TESTTEST group_names from LDAP: {}".format( group_names ) )
     if not dry_run and DELETE_GROUPS:
         remove_obsolete_irods_groups(irods, group_names, syncable_irods_groups)
 
