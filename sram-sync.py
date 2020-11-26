@@ -523,8 +523,8 @@ def remove_obsolete_irods_users(sess, ldap_users, irods_users, dry_run):
 
     # Safety pal: the script must not delete if amount of users to be deleted is higher than the threshold
     if len(deletion_users) >= DELETE_USERS_LIMIT:
-        logger.error("-- The limit of deletions (%d) in one synchronization have been reached. "
-                     "Deletions aborted" % len(deletion_users) )
+        logger.error("-- The limit of deletions ({} >= {}) in one synchronization is exceeded. "
+                     "Deletions aborted".format(len(deletion_users), DELETE_USERS_LIMIT))
     else:
         if dry_run:
            logger.info("-- deletion of users not permitted. wont delete any user" )
