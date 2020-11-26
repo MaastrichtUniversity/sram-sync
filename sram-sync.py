@@ -12,7 +12,8 @@ from enum import Enum
 import ldap
 from irods.column import Criterion
 from irods.exception import PycommandsException, iRODSException, UserDoesNotExist, UserGroupDoesNotExist, \
-    CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME
+    CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME, \
+    CAT_INVALID_USER
 from irods.models import User
 from irods.models import UserMeta
 
@@ -635,6 +636,8 @@ def add_user_to_group(sess, group_name, user_name):
         logger.info("-- User: " + user_name + " added to group " + group_name)
     except CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME:
         logger.info("-- User {} already in group {} ".format(user_name, group_name))
+    except CAT_INVALID_USER:
+        logger.error("-- could not add user {} to group {}. User does not exist".format(user_name, group_name))
     except (PycommandsException, iRODSException) as e:
         logger.error("-- could not add user {} to group {}. '{}'".format(user_name, group_name, e))
 
