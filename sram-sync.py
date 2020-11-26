@@ -377,8 +377,9 @@ class LdapGroup:
                logger.info( "TESTEST: the uniqueId was used for the same group!" )
                return group_name;
             else:
-               logger.warn( "GroupTracking: The uniqueId {} referring to irods group {} is now referring to group name: {}. Possible renaming?".format( unique_id, group_name, foundGroupName) )
-               return foundGroupName;
+               str = "GroupTracking: The uniqueId '{}' for irods group '{}' was already used for group: '{}'. This should never happen. Please check with SRAM what is going on.".format( unique_id, group_name, foundGroupName)
+               logger.error(str)
+               raise Exception( str );
         raise Exception( "This line should be unreachable!" )
 
     # ---
@@ -396,7 +397,7 @@ class LdapGroup:
             #it should be impossible to trigger the exception here, but better be safe then sorry...
             if GroupAVU.UNIQUE_ID.value in existing_avus :
               if existing_avus[ GroupAVU.UNIQUE_ID.value ] != self.unique_id:
-                 str = "Tryed to update group {}, found existing uniqueId: {} that doesnt match the uniqueId in LDAP: {}".format( self.group_name, existing_avus[ GroupAVU.UNIQUE_ID.value ], self.uniqueId )
+                 str = "GroupTracking: The uniqueId '{}' for irods group '{}' differs from the uniqueId in LDAP: '{}'. This should never happen. Please check with SRAM what is going on.".format( existing_avus[ GroupAVU.UNIQUE_ID.value ], self.group_name, self.unique_id )
                  logger.error( str )
                  raise Exception( str )
               else:
@@ -405,8 +406,8 @@ class LdapGroup:
             else:
                 #apparently there is no uniqueId on the existing grouo! This should usually not happen!
                 logger.warn( "-- The group: {} doesnt have a uniqueId-AVU, will add uniqueId: {}".format( self.group_name, self.unique_id ) )
-                if set_singular_avu(self.irods_group, GroupAVU.UNIQUE_ID.value, self.uniqueId):
-                   logger.info("-- group {} updated AVU: {} {}".format(self.groupo_name, GroupAVU.UNIQUE_ID.value, self.unique_id))
+                if set_singular_avu(self.irods_group, GroupAVU.UNIQUE_ID.value, self.unique_id):
+                   logger.info("-- group {} updated AVU: {} {}".format(self.group_name, GroupAVU.UNIQUE_ID.value, self.unique_id))
 
             # careful: because the list of existing AVUs is not updated changing a key multiple times will lead to
             # strange behavior!
