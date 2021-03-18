@@ -421,7 +421,7 @@ class LdapGroup:
                 logger.info("-- group {} updated AVU: {} {}".format(self.group_name, GroupAVU.DISPLAY_NAME.value,
                                                                     self.display_name))
         except iRODSException as error:
-            logger.error("-- error changing AVUs" + str(error))
+            logger.error("-- error changing AVUs {}".format(error))
         existing_avus = get_all_avus(self.irods_group)
         logger.debug("-- existing AVUs AFTER: {}".format(existing_avus))
         return self.irods_group
