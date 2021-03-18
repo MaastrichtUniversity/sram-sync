@@ -713,7 +713,7 @@ def sync_ldap_groups_to_irods(ldap, irods, dry_run):
         if not dry_run:
             group.sync_to_irods(irods, dry_run, None, None, None)
         else:
-            logger.info("-- syncing of groups not permitted. Group {} will no be changed/created".format(group_name))
+            logger.info("-- syncing of groups not permitted. Group {} will no be changed/created".format(co_key))
 
     return co_key_2_group
 
