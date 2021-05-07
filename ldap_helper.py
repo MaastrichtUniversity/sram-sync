@@ -43,7 +43,7 @@ def for_ldap_entries_do( c, base_dn, search_filter, retrieve_attributes, callbac
 
 def get_ldap_connection(ldap_host, ldap_user, ldap_pass):
     max_tries = 5
-    sleep_interval = 4
+    sleep_interval = 30
     for n in range(max_tries + 1):
         try:
             # Setup LDAP connection
