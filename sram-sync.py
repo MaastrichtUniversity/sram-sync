@@ -835,10 +835,6 @@ def main(settings):
             logger.warning(str(e))
             logger.warning("LDAP SERVER_DOWN exception has been caught. Will restart in 15 seconds.")
             time.sleep(15)
-        except ldap.LDAPError as e:
-            run_condition = False
-            logger.error(str(e))
-            raise Exception("LDAP error occurred")
         else:
             # Idea here is that we want to die after several connection errors to the LDAP in a row, so
             # if we didn't catch any exceptions, we reset the counter.
