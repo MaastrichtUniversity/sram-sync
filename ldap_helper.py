@@ -1,6 +1,5 @@
 import logging
 import os
-import time
 import ldap
 
 # Setup logging
@@ -42,18 +41,8 @@ def for_ldap_entries_do( c, base_dn, search_filter, retrieve_attributes, callbac
 ##########################################################
 
 def get_ldap_connection(ldap_host, ldap_user, ldap_pass):
-    max_tries = 5
-    sleep_interval = 120
-    for n in range(max_tries + 1):
-        try:
-            # Setup LDAP connection
-            c = ldap.initialize(ldap_host)
-            c.protocol_version = ldap.VERSION3
-            c.simple_bind_s(ldap_user, ldap_pass)
-            return c
-        except ldap.LDAPError as e:
-            logger.error(str(e))
-            logger.info("retry {0} / {1}".format(n, max_tries))
-            time.sleep(sleep_interval)
-        if n >= max_tries:
-            raise Exception("couldn't connect to LDAP")
+    # Setup LDAP connection
+    c = ldap.initialize(ldap_host)
+    c.protocol_version = ldap.VERSION3
+    c.simple_bind_s(ldap_user, ldap_pass)
+    return c
