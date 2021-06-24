@@ -72,6 +72,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--commit", default=False, action='store_true', help="write any updates/changes to iRODS")
     parser.add_argument("--scheduled", default=False, action='store_true', help="if set runs every few minutes")
+    parser.add_argument("--server-down-tries", default=10, action='store', type=int, choices=range(0, 100),
+                        dest='server_down_tries', help="how many times it should re-attempt to connect to LDAP if connection fails")
 
     return parser.parse_args()
 
@@ -784,7 +786,7 @@ def sync_group_memberships(irods, ldap_groups, dry_run):
 ##########################################################
 
 
-def main(dry_run):
+def run(dry_run):
     start_time = datetime.now()
     logger.info("SRAM-SYNC started at: {}".format(start_time))
 
@@ -808,6 +810,37 @@ def main(dry_run):
 
     return 0
 
+def main(settings):
+    ret_val = -1
+    counter_server_down = 0
+    run_condition = True
+
+    while run_condition:
+        try:
+            ret_val = run(not settings.commit)
+            if not settings.scheduled:
+                run_condition = False
+            else:
+                run_condition = True
+                seconds = int(SLEEP_INTERVAL_MINUTES * 60)
+                logger.info("Sleeping for {} seconds".format(seconds))
+                time.sleep(seconds)
+        except ldap.SERVER_DOWN as e:
+            counter_server_down += 1
+            if counter_server_down > settings.server_down_tries:
+                logger.error("Exhausted all attempts ({}) to connect to LDAP SERVER in a row. Aborting execution.".format(settings.server_down_tries))
+                run_condition = False
+                raise Exception("Too many LDAP.SERVER_DOWN")
+
+            logger.warning(str(e))
+            logger.warning("LDAP SERVER_DOWN exception has been caught. Will restart in 15 seconds.")
+            time.sleep(15)
+        else:
+            # Idea here is that we want to die after several connection errors to the LDAP in a row, so
+            # if we didn't catch any exceptions, we reset the counter.
+            counter_server_down = 0
+
+    return ret_val
 
 ##########################################################
 
@@ -825,13 +858,7 @@ if __name__ == "__main__":
     logger.debug("DEBUG ON")
     print(settings)
     try:
-        exit_code = main(not settings.commit)
-        if settings.scheduled:
-            while True:
-                seconds = int(SLEEP_INTERVAL_MINUTES * 60)
-                logger.info("Sleeping for {} seconds".format(seconds))
-                time.sleep(seconds)
-                main(not settings.commit)
+        exit_code = main(settings)
         sys.exit(exit_code)
     finally:
         # Perform any clean up of connections on closing here
