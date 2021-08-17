@@ -97,7 +97,7 @@ class UserAVU(Enum):
     EXTERNAL_ID = 'voPersonExternalID'
     EXTERNAL_AFFILIATION = 'voPersonExternalAffiliation'
     UNIQUE_ID = 'eduPersonUniqueID'
-    PENDING_DELETION = 'pendingDeletion'
+    PENDING_DELETION = 'pendingDeletionProcedure'
 
 
 class GroupAVU(Enum):
