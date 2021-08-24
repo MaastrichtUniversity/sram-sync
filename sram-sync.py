@@ -30,7 +30,6 @@ DEFAULT_USER_PASSWORD = os.environ['DEFAULT_USER_PASSWORD']
 
 SYNC_USERS = True if os.environ['SYNC_USERS'] == 'True' else False
 DELETE_USERS = True if os.environ['DELETE_USERS'] == 'True' else False
-DELETE_USERS_LIMIT = int(os.environ['DELETE_USERS_LIMIT'])
 SYNC_GROUPS = True if os.environ['SYNC_GROUPS'] == 'True' else False
 DELETE_GROUPS = True if os.environ['DELETE_GROUPS'] == 'True' else False
 
