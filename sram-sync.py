@@ -30,7 +30,6 @@ DEFAULT_USER_PASSWORD = os.environ['DEFAULT_USER_PASSWORD']
 
 SYNC_USERS = True if os.environ['SYNC_USERS'] == 'True' else False
 DELETE_USERS = True if os.environ['DELETE_USERS'] == 'True' else False
-DELETE_USERS_LIMIT = int(os.environ['DELETE_USERS_LIMIT'])
 SYNC_GROUPS = True if os.environ['SYNC_GROUPS'] == 'True' else False
 DELETE_GROUPS = True if os.environ['DELETE_GROUPS'] == 'True' else False
 
@@ -97,6 +96,7 @@ class UserAVU(Enum):
     EXTERNAL_ID = 'voPersonExternalID'
     EXTERNAL_AFFILIATION = 'voPersonExternalAffiliation'
     UNIQUE_ID = 'eduPersonUniqueID'
+    PENDING_DELETION = 'pendingDeletionProcedure'
 
 
 class GroupAVU(Enum):
@@ -512,39 +512,43 @@ def get_users_from_ldap(l):
 
 
 ##########################################################
-def remove_obsolete_irods_users(sess, ldap_users, irods_users, dry_run):
+def mark_obsolete_irods_users_for_deletion(sess, ldap_users, irods_users, dry_run):
     logger.info("* Deleting obsolete irods users...")
     deletion_candidates = irods_users.copy()
     for ldap_user in ldap_users:
         deletion_candidates.discard(ldap_user.uid)
 
     number_pending_invites = 0
+    number_pending_deletions = 0
     deletion_users = []
     for uid in deletion_candidates:
         user = sess.users.get(uid)
         avus = get_all_avus(user)
+        mark_to_deletion = True
         if UserAVU.PENDING_INVITE.value in avus:
             logger.info("-- won't delete user {} since its marked as invitation pending.".format(uid))
             number_pending_invites = number_pending_invites + 1
-        else:
-            logger.info("-- will delete user {}".format(uid))
+            mark_to_deletion = False
+        if UserAVU.PENDING_DELETION.value in avus:
+            logger.info("-- won't delete user {} since its already marked for deletion.".format(uid))
+            number_pending_deletions = number_pending_deletions + 1
+            mark_to_deletion = False
+        if mark_to_deletion:
+            logger.info("-- will mark user {} for deletion".format(uid))
             deletion_users.append(uid)
 
-    logger.info("-- found obsolete users for deletion {} and users with pending invites {}.".format(len(deletion_users),
-                                                                                                    number_pending_invites))
+    logger.info("-- found obsolete users for deletion {}.".format(len(deletion_users)))
+    logger.info("-- found users with pending invites {}.".format(number_pending_invites))
+    logger.info("-- found users with pending deletions {}.".format(number_pending_deletions))
 
-    # Safety pal: the script must not delete if amount of users to be deleted is higher than the threshold
-    if len(deletion_users) >= DELETE_USERS_LIMIT:
-        logger.error("-- The limit of deletions ({} >= {}) in one synchronization is exceeded. "
-                     "Deletions aborted".format(len(deletion_users), DELETE_USERS_LIMIT))
-    else:
-        if dry_run:
-            logger.info("-- deletion of users not permitted. wont delete any user")
-        else:
-            for uid in deletion_users:
-                logger.info("-- deleting user: {}".format(uid))
-                user = sess.users.get(uid)
-                user.remove()
+    for uid in deletion_users:
+        user = sess.users.get(uid)
+        logger.info("-- marking user for deletion user: {}".format(uid))
+        try:
+            if set_singular_avu(user, UserAVU.PENDING_DELETION.value, "true"):
+                logger.info("-- user {} updated AVU: {} {}".format(uid, UserAVU.PENDING_DELETION.value, "true"))
+        except iRODSException as error:
+            logger.error("-- error changing AVUs" + str(error))
 
 
 ##########################################################
@@ -559,7 +563,7 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
 
     # remove obsolete users from irods
     if DELETE_USERS:
-        remove_obsolete_irods_users(irods, ldap_users, irods_users, dry_run)
+        mark_obsolete_irods_users_for_deletion(irods, ldap_users, irods_users, dry_run)
 
     # Loop over ldap users and create or update as necessary
     logger.debug("* Syncing {} found LDAP entries to iRODS:".format(len(ldap_users)))

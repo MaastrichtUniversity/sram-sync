@@ -29,7 +29,6 @@ An example compose file below.
       LOGSTASH_TAGS: SRAMSYNC
       SYNC_USERS: "True"
       DELETE_USERS: "True"
-      DELETE_USERS_LIMIT: 3
       SYNC_GROUPS: "True"
       DELETE_GROUPS: "True"
     command: sram-sync.py --commit --scheduled
