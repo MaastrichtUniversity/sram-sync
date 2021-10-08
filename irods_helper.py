@@ -1,7 +1,7 @@
 import logging
 import os
-import sys
 import time
+import ssl
 
 from irods.exception import NetworkException
 from irods.meta import iRODSMeta
@@ -57,10 +57,27 @@ def set_singular_avu(irods_user, avu_key, avu_value):
 def get_irods_connection(irods_host, irods_port, irods_user, irods_pass, irods_zone):
     max_tries = 5
     sleep_interval = 4
+    ssl_context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH, cafile=None, capath=None, cadata=None)
+    ssl_settings = {
+        'irods_client_server_negotiation': 'request_server_negotiation',
+        'irods_client_server_policy': os.environ['IRODS_CLIENT_SERVER_POLICY'],
+        'irods_encryption_algorithm': 'AES-256-CBC',
+        'irods_encryption_key_size': 32,
+        'irods_encryption_num_hash_rounds': 16,
+        'irods_encryption_salt_size': 8,
+        'ssl_context': ssl_context
+    }
     for n in range(max_tries + 1):
         try:
             # Setup iRODS connection
-            sess = iRODSSession(host=irods_host, port=irods_port, user=irods_user, password=irods_pass, zone=irods_zone)
+            sess = iRODSSession(
+                host=irods_host,
+                port=irods_port,
+                user=irods_user,
+                password=irods_pass,
+                zone=irods_zone,
+                **ssl_settings
+            )
             return sess
         except NetworkException as e:
             logger.error(str(e))
