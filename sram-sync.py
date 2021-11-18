@@ -798,19 +798,19 @@ def run(dry_run):
         logger.info("EXECUTING SCRIPT IN DRY MODE! No changes will be made to iCAT.")
 
     ldap = get_ldap_connection(LDAP_HOST, LDAP_USER, LDAP_PASS)
-    irods = get_irods_connection(IRODS_HOST, IRODS_PORT, IRODS_USER, IRODS_PASS, IRODS_ZONE)
-    ldap_groups = None
-    if SYNC_USERS:
-        sync_ldap_users_to_irods(ldap, irods, dry_run)
+    with get_irods_connection(IRODS_HOST, IRODS_PORT, IRODS_USER, IRODS_PASS, IRODS_ZONE) as irods:
+        ldap_groups = None
+        if SYNC_USERS:
+            sync_ldap_users_to_irods(ldap, irods, dry_run)
 
-    if SYNC_GROUPS:
-        ldap_groups = sync_ldap_groups_to_irods(ldap, irods, dry_run)
+        if SYNC_GROUPS:
+            ldap_groups = sync_ldap_groups_to_irods(ldap, irods, dry_run)
 
-    if SYNC_USERS and SYNC_GROUPS:
-        sync_group_memberships(irods, ldap_groups, dry_run)
+        if SYNC_USERS and SYNC_GROUPS:
+            sync_group_memberships(irods, ldap_groups, dry_run)
 
-    end_time = datetime.now()
-    logger.info("SRAM-SYNC finished at: {} (took {} sec)\n".format(end_time, (end_time - start_time).total_seconds()))
+        end_time = datetime.now()
+        logger.info("SRAM-SYNC finished at: {} (took {} sec)\n".format(end_time, (end_time - start_time).total_seconds()))
 
     return 0
 
