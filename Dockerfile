@@ -1,4 +1,4 @@
-FROM python:3.6
+FROM python:3.10
 
 WORKDIR /opt/app
 
@@ -19,7 +19,8 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libldap2-dev \
     libsasl2-dev \
-    libssl-dev
+    libssl-dev \
+    libldap-common
 
 # Python requirements
 ADD requirements.txt /opt
