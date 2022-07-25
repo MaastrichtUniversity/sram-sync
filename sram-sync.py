@@ -21,6 +21,7 @@ from irods.exception import (
 )
 from irods.models import User
 from irods.models import UserMeta
+from irodsrulewrapper.rule import RuleManager
 
 from irods_helper import get_all_avus, set_singular_avu, get_irods_connection
 from ldap_helper import get_ldap_connection, for_ldap_entries_do, read_ldap_attribute
@@ -571,7 +572,28 @@ def get_users_from_ldap(l):
 
 
 ##########################################################
-def mark_obsolete_irods_users_for_deletion(sess, ldap_users, irods_users, dry_run):
+def mark_obsolete_irods_users_for_deletion(sess, ldap_users, irods_users, dry_run) -> list[str]:
+    """
+    First find the obsolete irods users (= exist in iRODS but not in the SRAM-LDAP)
+    Then, if those users are not safe from deletion, marked them for deletion by setting UserAVU.PENDING_DELETION
+    to 'true'.
+
+    Parameters
+    ----------
+    sess: iRODSSession
+        A active authenticated iRODS session
+    ldap_users: list[str]
+        The complete list of SRAM-LDAP users
+    irods_users: list[str]
+        The complete list of iRODS users
+    dry_run: bool
+        Indicate if the current script is in dry mode.
+
+    Returns
+    -------
+    list[str]
+        The list of obsolete iRODS users marked for deletion.
+    """
     logger.info("* Deleting obsolete irods users...")
     deletion_candidates = irods_users.copy()
     for ldap_user in ldap_users:
@@ -609,6 +631,24 @@ def mark_obsolete_irods_users_for_deletion(sess, ldap_users, irods_users, dry_ru
         except iRODSException as error:
             logger.error("-- error changing AVUs" + str(error))
 
+    return deletion_users
+
+
+def invalidate_temporary_password_for_obsolete_users(obsolete_irods_users: list[str]):
+    """
+    Loop through the obsolete irods users list and for each user invalidate their temporary password.
+
+    Parameters
+    ----------
+    obsolete_irods_users: list[str]
+        The list of obsolete irods user
+    """
+    for username in obsolete_irods_users:
+        rule_manager = RuleManager(admin_mode=True)
+        user_id = rule_manager.session.users.get(username).id
+        rule_manager.remove_user_temporary_passwords(user_id)
+        rule_manager.session.cleanup()
+
 
 ##########################################################
 
@@ -623,7 +663,8 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
 
     # remove obsolete users from irods
     if DELETE_USERS:
-        mark_obsolete_irods_users_for_deletion(irods, ldap_users, irods_users, dry_run)
+        deletion_users = mark_obsolete_irods_users_for_deletion(irods, ldap_users, irods_users, dry_run)
+        invalidate_temporary_password_for_obsolete_users(deletion_users)
 
     # Loop over ldap users and create or update as necessary
     logger.debug("* Syncing {} found LDAP entries to iRODS:".format(len(ldap_users)))
