@@ -18,6 +18,7 @@ from irods.exception import (
     UserGroupDoesNotExist,
     CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME,
     CAT_INVALID_USER,
+    QueryException,
 )
 from irods.models import User
 from irods.models import UserMeta
@@ -643,11 +644,16 @@ def invalidate_temporary_password_for_obsolete_users(obsolete_irods_users: list[
     obsolete_irods_users: list[str]
         The list of obsolete irods user
     """
+    rule_manager = RuleManager(admin_mode=True)
     for username in obsolete_irods_users:
-        rule_manager = RuleManager(admin_mode=True)
         user_id = rule_manager.session.users.get(username).id
-        rule_manager.remove_user_temporary_passwords(user_id)
-        rule_manager.session.cleanup()
+        try:
+            rule_manager.remove_user_temporary_passwords(user_id)
+        except RuntimeError:
+            logger.error(f"Failed to remove temporary password for {user_id}")
+        except QueryException:
+            logger.error(f"Failed to remove temporary password for {user_id}")
+    rule_manager.session.cleanup()
 
 
 ##########################################################
