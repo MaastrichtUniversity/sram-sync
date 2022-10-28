@@ -1,3 +1,3 @@
 python-irodsclient
 python-ldap
-git+https://github.com/MaastrichtUniversity/irods-rule-wrapper.git@develop#egg=irods-rule-wrapper
+git+https://github.com/MaastrichtUniversity/irods-rule-wrapper.git@2022.2#egg=irods-rule-wrapper
