@@ -228,6 +228,11 @@ class LdapUser:
         if self.email:
             new_irods_user.metadata.add(UserAVU.EMAIL.value, self.email)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EMAIL.value, self.email))
+            try:
+                irods_session.users.get(self.email)
+                logger.info("-- user with this email address already exists in iRODS")
+            except UserDoesNotExist:
+                logger.info("-- user {} did not previously exist in iRODS".format(self.uid))
         if self.display_name:
             new_irods_user.metadata.add(UserAVU.DISPLAY_NAME.value, self.display_name)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
