@@ -1,3 +1,2 @@
 python-ldap
 git+https://github.com/MaastrichtUniversity/irods-rule-wrapper.git@2023.1#egg=irods-rule-wrapper
->>>>>>> origin/main
