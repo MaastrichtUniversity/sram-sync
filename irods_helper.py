@@ -57,7 +57,7 @@ def set_singular_avu(irods_user, avu_key, avu_value):
 
 def get_irods_connection(irods_host, irods_port, irods_user, irods_pass, irods_zone):
     max_tries = 5
-    sleep_interval = 4
+    sleep_interval = 5
     ssl_context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH, cafile=None, capath=None, cadata=None)
     ssl_settings = {
         "irods_client_server_negotiation": "request_server_negotiation",
@@ -68,16 +68,30 @@ def get_irods_connection(irods_host, irods_port, irods_user, irods_pass, irods_z
         "irods_encryption_salt_size": 8,
         "ssl_context": ssl_context,
     }
-    for n in range(max_tries + 1):
+
+    session = None
+    for n in range(max_tries):
         try:
             # Setup iRODS connection
-            sess = iRODSSession(
+            session = iRODSSession(
                 host=irods_host, port=irods_port, user=irods_user, password=irods_pass, zone=irods_zone, **ssl_settings
             )
-            return sess
-        except NetworkException as e:
+            # We need to do something with it to _actually_ establish a session, like reading "server_version".
+            logger.info(f"Establishing connection to iRODS {session.server_version}")
+        except (NetworkException, ConnectionRefusedError) as e:
             logger.error(str(e))
-            logger.info("retry {0} / {1}".format(n, max_tries))
+            logger.error("Failed attempt to connect to iRODS.")
+            logger.info(f"Will try again ({n + 1}/{max_tries}) in {sleep_interval} seconds.")
+            session = None
             time.sleep(sleep_interval)
-        if n >= max_tries:
-            raise Exception("couldn't connect to iRods")
+        except:
+            logger.error(str(e))
+            logger.error("Failed attempt to connect to iRODS.")
+            session = None
+            # We'll just error out for now here..
+            raise Exception("Caught an unexpected exception for which re-try mechanism has not been planned.")
+
+    if not session:
+        raise Exception("Could not connect to iRODS.")
+
+    return session
