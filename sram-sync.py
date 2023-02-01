@@ -71,6 +71,8 @@ IRODS_ZONE = "nlmumc"
 # irods groups and users with this AVU should not be synchronized (i.e. service-accounts, DH-ingest, ...)
 LDAP_SYNC_AVU = "ldapSync"
 
+# Number of runs is kept up to date here
+UPDATE_SYNCS_FILE_PATH = "/var/run/sram-syncs"
 
 ##########################################################
 
@@ -944,10 +946,19 @@ def main(settings):
     ret_val = -1
     counter_server_down = 0
     run_condition = True
+    runs = 0
 
     while run_condition:
         try:
+            # TODO: return value is not meaningful. Perhaps would make sense
+            # returning number of users syncs or groups or something..
             ret_val = run(not settings.commit)
+            # Very rudimentary: keep a file updated with the number of runs
+            # Note: we hackily use this to wait on sram-sync in development
+            runs += 1
+            with open(UPDATE_SYNCS_FILE_PATH, 'w') as syncs_file:
+                syncs_file.write(f"{runs}\n")
+
             if not settings.scheduled:
                 run_condition = False
             else:
