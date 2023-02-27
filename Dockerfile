@@ -26,6 +26,9 @@ RUN apt-get update \
 ADD requirements.txt /opt
 RUN pip install -r /opt/requirements.txt
 
+# /dh_is_ready.sh will print READY if sram-sync has run at least once
+ADD dh_is_ready.sh /dh_is_ready.sh
+
 # Entry point
 ADD bootstrap.sh /opt
 RUN chmod +x /opt/bootstrap.sh
