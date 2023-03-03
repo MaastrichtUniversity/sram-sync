@@ -29,6 +29,10 @@ RUN pip install -r /opt/requirements.txt
 # /dh_is_ready.sh will print READY if sram-sync has run at least once
 ADD dh_is_ready.sh /dh_is_ready.sh
 
+# This keeps track of the amount of runs, which is used for the development is_ready.sh script
+RUN touch /var/run/sram-syncs
+RUN chmod a+w /var/run/sram-syncs
+
 # Entry point
 ADD bootstrap.sh /opt
 RUN chmod +x /opt/bootstrap.sh
