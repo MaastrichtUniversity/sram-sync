@@ -15,7 +15,7 @@ from irods.exception import (
     PycommandsException,
     iRODSException,
     UserDoesNotExist,
-    UserGroupDoesNotExist,
+    GroupDoesNotExist,
     CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME,
     CAT_INVALID_USER,
     QueryException,
@@ -394,7 +394,7 @@ class LdapGroup:
         if dry_run:
             return
         logger.info("Creating group: {}".format(self.group_name))
-        new_group = irods_session.user_groups.create(self.group_name)
+        new_group = irods_session.groups.create(self.group_name)
         new_group.metadata.add(GroupAVU.UNIQUE_ID.value, self.unique_id)
         if self.display_name:
             new_group.metadata.add(GroupAVU.DISPLAY_NAME.value, self.display_name)
@@ -464,7 +464,7 @@ class LdapGroup:
                     raise Exception(str)
             else:
                 # apparently there is no uniqueId on the existing grouo! This should usually not happen!
-                logger.warn(
+                logger.warning(
                     "-- The group: {} doesnt have a uniqueId-AVU, will add uniqueId: {}".format(
                         self.group_name, self.unique_id
                     )
@@ -504,8 +504,8 @@ class LdapGroup:
         try:
             # check if a group with the given name (short-name) and unique_id exists!
             irods_group_name = LdapGroup.get_group_by_unique_id(irods_session, self.unique_id, self.group_name)
-            self.irods_group = irods_session.user_groups.get(irods_group_name)
-        except UserGroupDoesNotExist:
+            self.irods_group = irods_session.groups.get(irods_group_name)
+        except GroupDoesNotExist:
             exists_group = False
 
         if not exists_group:
@@ -532,7 +532,7 @@ class LdapGroup:
 
     @classmethod
     def remove_group_from_irods(cls, sess, group_name):
-        sess.users.remove(group_name, user_zone=IRODS_ZONE)
+        sess.groups.remove(group_name, user_zone=IRODS_ZONE)
 
 
 ##########################################################
@@ -763,7 +763,7 @@ def get_ldap_co_groups(l):
 
 ##########################################################
 def add_user_to_group(sess, group_name, user_name):
-    irods_group = sess.user_groups.get(group_name)
+    irods_group = sess.groups.get(group_name)
     try:
         irods_group.addmember(user_name)
         logger.info("-- User: " + user_name + " added to group " + group_name)
@@ -777,7 +777,7 @@ def add_user_to_group(sess, group_name, user_name):
 
 ##########################################################
 def remove_user_from_group(sess, group_name, user_name):
-    irods_group = sess.user_groups.get(group_name)
+    irods_group = sess.groups.get(group_name)
     try:
         irods_group.removemember(user_name)
         logger.info("-- User: " + user_name + " removed from group " + group_name)
@@ -796,7 +796,7 @@ def get_syncable_irods_groups(sess):
     for result in query:
         n = n + 1
         #       if not result[User.name] in unsynced_users:
-        irodsGroup = sess.users.get(result[User.name])
+        irodsGroup = sess.groups.get(result[User.name])
         syncAVUs = irodsGroup.metadata.get_all(LDAP_SYNC_AVU)
         if not syncAVUs:
             irods_group_names_set.add(irodsGroup.name)
@@ -883,7 +883,7 @@ def sync_group_memberships(irods, ldap_groups, dry_run):
 
     # populate the dict irods_groups_2_users with irods group name to set of irods user names
     for groupName in syncable_irods_groups:
-        userGroup = irods.user_groups.get(groupName)
+        userGroup = irods.groups.get(groupName)
         member_names = set(user.name for user in userGroup.members)
         logger.debug("-- irods-group: {}, members: {}".format(groupName, member_names))
         irods_groups_2_users[groupName] = member_names
