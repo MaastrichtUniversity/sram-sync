@@ -14,7 +14,6 @@ from irods.column import Criterion
 from irods.exception import (
     PycommandsException,
     iRODSException,
-    UserDoesNotExist,
     GroupDoesNotExist,
     CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME,
     CAT_INVALID_USER,
@@ -145,6 +144,7 @@ class LdapUser:
         self.external_id = external_id
         self.external_affiliation = external_affiliation
         self.irods_user = None
+        self.matched_by_email = False
 
     def __repr__(self):
         return "User( uid:{}, eduPersonUniqueID: {}, displayName: {}, email: {}, voPersonExternalID: {}, voPersonExternalAffiliation: {}, iRodsUser: {})".format(
@@ -183,7 +183,7 @@ class LdapUser:
                 return False
 
         if update and existing_avus:
-            existing_unique_id = existing_avus[UserAVU.UNIQUE_ID.value]
+            existing_unique_id = existing_avus.get(UserAVU.UNIQUE_ID.value)
             if existing_unique_id == unique_id:
                 return True
             else:
@@ -224,17 +224,13 @@ class LdapUser:
         ):
             raise Exception("For user {} the provided voPersonUniqueID {} is invalid!".format(self.uid, self.unique_id))
 
-        new_irods_user = irods_session.users.create(self.uid, "rodsuser")
+        username = self.uid.lower()
+        new_irods_user = irods_session.users.create(username, "rodsuser")
         new_irods_user.metadata.add(UserAVU.UNIQUE_ID.value, self.unique_id)
         logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.UNIQUE_ID.value, self.unique_id))
         if self.email:
             new_irods_user.metadata.add(UserAVU.EMAIL.value, self.email)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.EMAIL.value, self.email))
-            try:
-                irods_session.users.get(self.email)
-                logger.info("-- user with this email address already exists in iRODS")
-            except UserDoesNotExist:
-                logger.info("-- user {} did not previously exist in iRODS".format(self.uid))
         if self.display_name:
             new_irods_user.metadata.add(UserAVU.DISPLAY_NAME.value, self.display_name)
             logger.info("-- user {} added AVU: {} {}".format(self.uid, UserAVU.DISPLAY_NAME.value, self.display_name))
@@ -249,12 +245,12 @@ class LdapUser:
                 )
             )
         password = create_new_irods_user_password()
-        irods_session.users.modify(self.uid, "password", password)
+        irods_session.users.modify(username, "password", password)
         self.irods_user = new_irods_user
 
         # Add the user to the group DH-ingest (= ensures that user is able to create and ingest dropzones)
         # TODO: Make this better configurable
-        add_user_to_group(irods_session, "DH-ingest", self.uid)
+        add_user_to_group(irods_session, "DH-ingest", username)
 
         return self.irods_user
 
@@ -266,7 +262,11 @@ class LdapUser:
             # read current AVUs and change if needed
             existing_avus = get_all_avus(self.irods_user)
             logger.debug("-- existing AVUs BEFORE: " + str(existing_avus))
-            if not LdapUser.is_uid_unique_id_combination_valid(
+            if self.matched_by_email:
+                # The complete identity preflight validated ownership of the new ID.
+                if set_singular_avu(self.irods_user, UserAVU.UNIQUE_ID.value, self.unique_id):
+                    logger.info("-- user %s updated eduPersonUniqueID to %s", self.irods_user.name, self.unique_id)
+            elif not LdapUser.is_uid_unique_id_combination_valid(
                 irods_session, self.uid, self.unique_id, update=True, existing_avus=existing_avus
             ):
                 raise Exception(
@@ -293,44 +293,43 @@ class LdapUser:
                 )
             if set_singular_avu(self.irods_user, UserAVU.PENDING_INVITE.value, None):
                 logger.info("-- user {} updated AVU: {} {}".format(self.uid, UserAVU.PENDING_INVITE.value, None))
+            if set_singular_avu(self.irods_user, UserAVU.PENDING_DELETION.value, None):
+                logger.info("-- user %s removed AVU: %s", self.irods_user.name, UserAVU.PENDING_DELETION.value)
         except iRODSException as error:
             logger.error("-- error changing AVUs" + str(error))
+            raise
         existing_avus = get_all_avus(self.irods_user)
         logger.debug("-- existing AVUs AFTER: " + str(existing_avus))
         return self.irods_user
 
     def sync_to_irods(self, irods_session, dry_run, created, updated, failed):
-        # Check if user exists
-        exists_username = True
+        # Account resolution and validation must finish for every LDAP user before writes.
+        action = "update" if self.irods_user else "create"
+        username = self.irods_user.name if self.irods_user else self.uid.lower()
+        operation = "check existing" if self.irods_user else "create"
+        logger.info("-- LDAP user %s: %s%s iRODS user %s", self.uid, "would " if dry_run else "", operation, username)
+        if dry_run:
+            if self.irods_user:
+                for avu in self.irods_user.metadata.items():
+                    if avu.name in (UserAVU.PENDING_INVITE.value, UserAVU.PENDING_DELETION.value):
+                        logger.info("-- would remove AVU %s from %s", avu.name, username)
+                if self.matched_by_email:
+                    logger.info("-- would set eduPersonUniqueID for %s to %s", username, self.unique_id)
+            return
         try:
-            # Lower case the uid (email address) from UM LDAP
-            # There are users with upper case character in their LDAP uid
-            self.irods_user = irods_session.users.get(self.uid.lower())
-        except UserDoesNotExist:
-            exists_username = False
-        # If user does not exists create user
-        if not exists_username:
-            try:
-                if not dry_run:
-                    self.irods_user = self.create_new_user(irods_session, dry_run)
-                logger.info("-- User: " + self.uid + " created")
+            if self.irods_user is None:
+                self.irods_user = self.create_new_user(irods_session, dry_run)
                 if created:
                     created()
-            except (PycommandsException, PycommandsException) as e:
-                logger.error("-- User creation error: " + str(e))
-                if failed:
-                    failed()
-        else:
-            try:
-                if not dry_run:
-                    self.irods_user = self.update_existing_user(irods_session, dry_run)
-                logger.debug("-- User: " + self.uid + " updated")
+            else:
+                self.irods_user = self.update_existing_user(irods_session, dry_run)
                 if updated:
                     updated()
-            except (PycommandsException, iRODSException) as e:
-                logger.error("-- User update error: " + str(e))
-                if failed:
-                    failed()
+        except (PycommandsException, iRODSException) as error:
+            logger.error("-- User %s error: %s", action, error)
+            if failed:
+                failed()
+            raise
 
 
 ##########################################################
@@ -362,7 +361,7 @@ class LdapGroup:
         dn = user_dn.decode("utf-8").strip()
         if dn == LDAP_EMPTY_USER:
             return None
-        user_dict = dict(re.findall(r"([\w]+)=([\w\.@]+)", dn))
+        user_dict = dict(re.findall(r"([\w]+)=([\w\.@-]+)", dn))
         return user_dict.get("uid", None)
 
     # ---
@@ -543,7 +542,9 @@ class LdapGroup:
 def syncable_irods_users(sess):
     irods_user_names_set = set()
     # filter only rodsusers, filter the special users, check wich one are not in the LDAP list
-    query = sess.query(User.name, User.id, User.type).filter(Criterion("=", User.type, "rodsuser"))
+    query = sess.query(User.name, User.id, User.type).filter(
+        Criterion("=", User.type, "rodsuser"), User.zone == IRODS_ZONE
+    )
     n = 0
     for result in query:
         n = n + 1
@@ -563,6 +564,86 @@ def syncable_irods_users(sess):
 
     logger.debug("iRODS users found: {} (allowed for synchronization: {})".format(n, len(irods_user_names_set)))
     return irods_user_names_set
+
+
+##########################################################
+
+def resolve_ldap_users(irods, ldap_users, syncable_users):
+    """Resolve and validate the entire LDAP snapshot without writing to iRODS."""
+    local_users = {}
+    emails = {}
+    unique_ids = {}
+    for row in irods.query(User.name, User.zone, User.type):
+        account = (row[User.name], row[User.zone])
+        user = irods.users.get(*account)
+        avus = user.metadata.items()
+        for avu in avus:
+            if avu.name == UserAVU.UNIQUE_ID.value:
+                unique_ids.setdefault(avu.value, set()).add(account)
+        if account[1] != IRODS_ZONE:
+            continue
+        local_users[user.name] = user
+        if row[User.type] != "rodsgroup":
+            for avu in avus:
+                if avu.name == UserAVU.EMAIL.value and avu.value.strip():
+                    emails.setdefault(avu.value.strip().lower(), set()).add(user.name)
+
+    mapping = {}
+    claimed_users = {}
+    claimed_ids = {}
+    claimed_emails = {}
+    conflicts = []
+    for user in ldap_users:
+        user.irods_user = None
+        user.matched_by_email = False
+        if not user.uid or not user.unique_id:
+            conflicts.append("LDAP uid %r requires both uid and eduPersonUniqueID" % user.uid)
+            continue
+        username = user.uid.lower()
+        email = (user.email or "").strip().lower()
+        matches = emails.get(email, set())
+        if len(matches) > 1:
+            conflicts.append("LDAP uid %s email %s matches iRODS accounts %s" % (user.uid, email, sorted(matches)))
+        if email:
+            if email in claimed_emails:
+                conflicts.append("LDAP uids %s and %s share email %s" % (claimed_emails[email], user.uid, email))
+            claimed_emails[email] = user.uid
+
+        existing = local_users.get(username)
+        if existing is not None and matches and username not in matches:
+            conflicts.append("LDAP uid %s and email %s identify different iRODS accounts: %s and %s" % (
+                user.uid, email, username, sorted(matches)
+            ))
+        if existing is None and len(matches) == 1:
+            username = next(iter(matches))
+            existing = local_users[username]
+            user.matched_by_email = True
+
+        if existing is not None:
+            user.irods_user = existing
+            if username not in syncable_users:
+                conflicts.append("LDAP uid %s resolves to protected iRODS account %s" % (user.uid, username))
+            existing_ids = {avu.value for avu in existing.metadata.get_all(UserAVU.UNIQUE_ID.value)}
+            if not user.matched_by_email and existing_ids != {user.unique_id}:
+                conflicts.append("LDAP uid %s has a conflicting eduPersonUniqueID on iRODS account %s" % (user.uid, username))
+
+        account = (username, IRODS_ZONE)
+        other_owners = unique_ids.get(user.unique_id, set()) - {account}
+        if other_owners:
+            conflicts.append("LDAP uid %s eduPersonUniqueID %s is owned by %s" % (user.uid, user.unique_id, sorted(other_owners)))
+        if username in claimed_users:
+            conflicts.append("LDAP uids %s and %s resolve to iRODS account %s" % (claimed_users[username], user.uid, username))
+        if user.unique_id in claimed_ids:
+            conflicts.append("LDAP uids %s and %s share eduPersonUniqueID %s" % (claimed_ids[user.unique_id], user.uid, user.unique_id))
+        claimed_users[username] = user.uid
+        claimed_ids[user.unique_id] = user.uid
+        mapping[user.uid] = username
+
+    if conflicts:
+        for conflict in conflicts:
+            logger.error("Identity conflict: %s", conflict)
+        raise ValueError("Identity conflicts found; synchronization stopped before making changes")
+    return mapping
 
 
 ##########################################################
@@ -590,8 +671,8 @@ def mark_obsolete_irods_users_for_deletion(sess, ldap_users, irods_users, dry_ru
     ----------
     sess: iRODSSession
         A active authenticated iRODS session
-    ldap_users: list[str]
-        The complete list of SRAM-LDAP users
+    ldap_users: set[str]
+        The resolved iRODS usernames of all active SRAM-LDAP users
     irods_users: list[str]
         The complete list of iRODS users
     dry_run: bool
@@ -603,9 +684,7 @@ def mark_obsolete_irods_users_for_deletion(sess, ldap_users, irods_users, dry_ru
         The list of obsolete iRODS users marked for deletion.
     """
     logger.info("* Deleting obsolete irods users...")
-    deletion_candidates = irods_users.copy()
-    for ldap_user in ldap_users:
-        deletion_candidates.discard(ldap_user.uid)
+    deletion_candidates = irods_users - set(ldap_users)
 
     number_pending_invites = 0
     number_pending_deletions = 0
@@ -629,6 +708,9 @@ def mark_obsolete_irods_users_for_deletion(sess, ldap_users, irods_users, dry_ru
     logger.info("-- found obsolete users for deletion {}.".format(len(deletion_users)))
     logger.info("-- found users with pending invites {}.".format(number_pending_invites))
     logger.info("-- found users with pending deletions {}.".format(number_pending_deletions))
+
+    if dry_run:
+        return []
 
     for uid in deletion_users:
         user = sess.users.get(uid)
@@ -673,11 +755,7 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
     logger.info("* LDAP users found: %d" % len(ldap_users))
 
     irods_users = syncable_irods_users(irods)
-
-    # remove obsolete users from irods
-    if DELETE_USERS:
-        deletion_users = mark_obsolete_irods_users_for_deletion(irods, ldap_users, irods_users, dry_run)
-        invalidate_temporary_password_for_obsolete_users(deletion_users)
+    mapping = resolve_ldap_users(irods, ldap_users, irods_users)
 
     # Loop over ldap users and create or update as necessary
     logger.debug("* Syncing {} found LDAP entries to iRODS:".format(len(ldap_users)))
@@ -687,13 +765,14 @@ def sync_ldap_users_to_irods(ldap, irods, dry_run):
         # Print username
         logger.debug("-- syncing LDAP user {}/{}: {}".format(n, len(ldap_users), user.uid))
 
-        if dry_run or (not SYNC_USERS):
-            logger.info("-- syncing of users not permitted. User {} will no be changed/created".format(user.uid))
-            continue
-
         user.sync_to_irods(irods, dry_run, None, None, None)
 
-    return ldap_users
+    if DELETE_USERS:
+        deletion_users = mark_obsolete_irods_users_for_deletion(irods, set(mapping.values()), irods_users, dry_run)
+        if not dry_run and deletion_users:
+            invalidate_temporary_password_for_obsolete_users(deletion_users)
+
+    return mapping
 
 
 ##########################################################
@@ -868,7 +947,7 @@ def diff_member_lists(ldap_members, irods_members):
 
 
 ##########################################################
-def sync_group_memberships(irods, ldap_groups, dry_run):
+def sync_group_memberships(irods, ldap_groups, dry_run, user_mapping):
     logger.info("Syncing group members to irods:")
 
     # create a mapping of irods group names to the member uids
@@ -897,7 +976,12 @@ def sync_group_memberships(irods, ldap_groups, dry_run):
         n = n + 1
         logger.info("* Syncing memberships for group {}...".format(group_name))
         irods_member_list = irods_groups_2_users.get(group_name, set())
-        stay, add, remove = diff_member_lists(group.member_uids, irods_member_list)
+        missing = [uid for uid in group.member_uids if uid not in user_mapping]
+        if missing:
+            logger.error("-- skipping memberships for group %s: LDAP members not resolved: %s", group_name, missing)
+            continue
+        ldap_members = {user_mapping[uid] for uid in group.member_uids}
+        stay, add, remove = diff_member_lists(ldap_members, irods_member_list)
         logger.info(
             "-- memberships for group {}: {} same, {} added, {} removed".format(
                 group_name, len(stay), len(add), len(remove)
@@ -926,13 +1010,13 @@ def run(dry_run):
     with get_irods_connection(IRODS_HOST, IRODS_PORT, IRODS_USER, IRODS_PASS, IRODS_ZONE) as irods:
         ldap_groups = None
         if SYNC_USERS:
-            sync_ldap_users_to_irods(ldap, irods, dry_run)
+            user_mapping = sync_ldap_users_to_irods(ldap, irods, dry_run)
 
         if SYNC_GROUPS:
             ldap_groups = sync_ldap_groups_to_irods(ldap, irods, dry_run)
 
         if SYNC_USERS and SYNC_GROUPS:
-            sync_group_memberships(irods, ldap_groups, dry_run)
+            sync_group_memberships(irods, ldap_groups, dry_run, user_mapping)
 
         end_time = datetime.now()
         logger.info(
